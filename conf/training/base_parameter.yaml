@@ -1,18 +1,18 @@
-experiment_name: zoo_ndnf_eo_nc70_b8_e500
+experiment_name: ???
 seed: null
 
 use_cuda: True
 use_mps: False
 
-log_interval: 100
+log_interval: ???
 
-k_folds: 4
+k_folds: ???
 
 model_type: eo
 model_architecture:
-  n_in: 21
-  n_conjunctions: 70
-  num_classes: 7
+  n_in: ???
+  n_conjunctions: ???
+  num_classes: ???
   weight_init_type: 'normal'
 
 optimiser: adam
@@ -20,9 +20,9 @@ optimiser_lr: 0.001
 optimiser_weight_decay: 0.00004
 scheduler_step: 100
 loss_func: ce
-batch_size: 8
+batch_size: 32
 loader_num_workers: 0
-epochs: 500
+epochs: 200
 
 dds:
   initial_delta: 0.1

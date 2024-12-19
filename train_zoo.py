@@ -14,12 +14,13 @@ import torch
 from torch import Tensor, nn
 import wandb
 
-from neural_dnf.neural_dnf import BaseNeuralDNF
+from neural_dnf.neural_dnf import BaseNeuralDNF, NeuralDNFEO
 from neural_dnf.utils import DeltaDelayedExponentialDecayScheduler
 
 from analysis import (
     MetricValueMeter,
     MultiClassAccuracyMeter,
+    JaccardScoreMeter,
     collate,
     synthesize,
 )
@@ -32,7 +33,6 @@ from utils import (
 
 
 log = logging.getLogger()
-BASE_STORAGE_DIR = Path(__file__).parent / "model_storage"
 
 
 def loss_calculation(
@@ -191,14 +191,19 @@ def train_fold(
         # 2. Evaluate performance on val
         # -------------------------------------------------------------------- #
         epoch_val_loss_meter = MetricValueMeter("val_loss_meter")
-        epoch_val_perf_score_meter = MultiClassAccuracyMeter()
+        epoch_val_acc_meter = MultiClassAccuracyMeter()
+        epoch_val_jacc_meter = JaccardScoreMeter()
+
         model.eval()
 
         for data in val_loader:
             with torch.no_grad():
                 # Get model output and compute loss
                 x, y = get_x_and_y_zoo(data, device, use_ndnf=True)
-                y_hat = model(x)
+                if isinstance(model, NeuralDNFEO):
+                    y_hat = model.get_plain_output(x)
+                else:
+                    y_hat = model(x)
                 conj_out = model.get_conjunction(x)
 
                 loss_dict = loss_calculation(
@@ -215,14 +220,26 @@ def train_fold(
 
                 # Update meters
                 epoch_val_loss_meter.update(loss)
-                epoch_val_perf_score_meter.update(y_hat, y)
+                epoch_val_acc_meter.update(y_hat, y)
+
+                # To get the jaccard score, we need to threshold the tanh activation
+                # to get the binary prediction of each class
+                y_hat = (torch.tanh(y_hat) > 0).long()
+                epoch_val_jacc_meter.update(y_hat, y)
 
         val_avg_loss = epoch_val_loss_meter.get_average()
-        val_avg_perf = epoch_val_perf_score_meter.get_average()
+        val_avg_acc = epoch_val_acc_meter.get_average()
+        val_sample_jaccard = epoch_val_jacc_meter.get_average()
+        val_macro_jaccard = epoch_val_jacc_meter.get_average("macro")
+        assert isinstance(val_sample_jaccard, float)
+        assert isinstance(val_macro_jaccard, float)
         if epoch % log_interval == 0:
             log.info(
-                "  Fold [%2d] [%3d] Val                  avg loss: %.3f  avg perf: %.3f"
-                % (fold_id + 1, epoch + 1, val_avg_loss, val_avg_perf)
+                f"  Fold [{fold_id + 1:2d}] [{epoch + 1:3d}] "
+                f"Val                  avg loss: {val_avg_loss:.3f}  "
+                f"avg acc: {val_avg_acc:.3f}  "
+                f"sample jacc: {val_sample_jaccard:.3f}  "
+                f"macro jacc: {val_macro_jaccard:.3f}"
             )
 
         # -------------------------------------------------------------------- #
@@ -240,24 +257,30 @@ def train_fold(
                 f"fold_{fold_id}/train/loss": avg_loss,
                 f"fold_{fold_id}/train/accuracy": avg_perf,
                 f"fold_{fold_id}/val/loss": val_avg_loss,
-                f"fold_{fold_id}/val/accuracy": val_avg_perf,
+                f"fold_{fold_id}/val/accuracy": val_avg_acc,
+                f"fold_{fold_id}/val/sample_jaccard": val_sample_jaccard,
+                f"fold_{fold_id}/val/macro_jaccard": val_macro_jaccard,
             }
             for key, meter in train_loss_meters.items():
                 if key == "overall_loss":
                     continue
-                wandb_log_dict[f"train/{key}"] = meter.get_average()
+                wandb_log_dict[f"fold_{fold_id}/train/{key}"] = (
+                    meter.get_average()
+                )
             if gen_weight_hist:
                 # Generate weight histogram
                 f1, f2 = generate_weight_histogram(model)
-                wandb_log_dict["conj_w_hist"] = wandb.Image(f1)
-                wandb_log_dict["disj_w_hist"] = wandb.Image(f2)
+                wandb_log_dict[f"fold_{fold_id}/conj_w_hist"] = wandb.Image(f1)
+                wandb_log_dict[f"fold_{fold_id}/disj_w_hist"] = wandb.Image(f2)
             wandb.log(wandb_log_dict)
 
     return model, {
         "train_loss": avg_loss,
         "train_accuracy": avg_perf,
         "val_loss": val_avg_loss,
-        "val_accuracy": val_avg_perf,
+        "val_accuracy": val_avg_acc,
+        "val_sample_jaccard": val_sample_jaccard,
+        "val_macro_jaccard": val_macro_jaccard,
     }
 
 
@@ -284,7 +307,7 @@ def train(cfg: DictConfig, run_dir: Path) -> dict[str, float]:
     fold_results = []
 
     # Load data
-    X, y, feature_names = get_zoo_data_np_from_path(
+    X, y, _ = get_zoo_data_np_from_path(
         data_dir_path=Path(cfg["dataset"]["save_dir"])
     )
     dataset = ZooDataset(X, y)
@@ -308,7 +331,10 @@ def train(cfg: DictConfig, run_dir: Path) -> dict[str, float]:
             use_wandb,
         )
 
-        model_path = run_dir / f"model_fold_{fold_id}.pth"
+        fold_dir = run_dir / f"fold_{fold_id}"
+        if not fold_dir.exists():
+            fold_dir.mkdir()
+        model_path = fold_dir / f"model_fold_{fold_id}.pth"
         torch.save(model.state_dict(), model_path)
         if use_wandb:
             wandb.save(glob_str=str(model_path.absolute()))
@@ -316,7 +342,7 @@ def train(cfg: DictConfig, run_dir: Path) -> dict[str, float]:
         models.append(model)
         fold_results.append(fold_result)
 
-        with open(run_dir / f"fold_{fold_id}_result.json", "w") as f:
+        with open(fold_dir / f"fold_{fold_id}_result.json", "w") as f:
             json.dump(fold_result, f, indent=4)
 
     # Average results
@@ -324,8 +350,11 @@ def train(cfg: DictConfig, run_dir: Path) -> dict[str, float]:
     for k, v in collate(fold_results).items():
         synth_dict = synthesize(v)
         for kk, vv in synth_dict.items():
-            avg_results[f"{k}/{kk}"] = vv
+            avg_results[f"aggregated/{k}/{kk}"] = vv
             log.info(f"{k}/{kk}: {vv:.3f}")
+
+    if use_wandb:
+        wandb.log(avg_results)
     return avg_results
 
 

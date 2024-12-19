@@ -1,0 +1,17 @@
+experiment_name: zoo_ndnf_eo_nc70_b8_e500
+
+use_cuda: True
+use_mps: False
+
+seed: 6262
+k_folds: 4
+
+model_type: eo
+model_architecture:
+  n_in: 21
+  n_conjunctions: 70
+  num_classes: 7
+  weight_init_type: 'normal'
+
+discretisation_method: threshold # 'threshold' or 'disentangle'
+storage_dir: ??? # overwrite this
