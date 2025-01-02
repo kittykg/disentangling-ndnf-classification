@@ -88,32 +88,19 @@ def multiround_prune(
         ):
             return False
 
-        # get all errored class numbers
-        og_errored_classes = set()
         for k in [
             "missing_predictions",
             "multiple_predictions",
             "wrong_predictions",
         ]:
-            error_classes = [int(c) for c in og_error_dict[k].keys()]
-            og_errored_classes.update(error_classes)
-        new_errored_classes = set()
-        for k in [
-            "missing_predictions",
-            "multiple_predictions",
-            "wrong_predictions",
-        ]:
-            error_classes = [int(c) for c in new_error_dict[k].keys()]
-            new_errored_classes.update(error_classes)
+            # for each of the error, check if the set of classes in the new
+            # dict is a subset of the classes in the original dict
+            og_error_classes = set([int(c) for c in og_error_dict[k].keys()])
+            new_error_classes = set([int(c) for c in new_error_dict[k].keys()])
+            if not new_error_classes.issubset(og_error_classes):
+                return False
 
-        # if the new overall erorr class count is equal to the old, check if the
-        # errored classes are the same
-        if len(og_errored_classes) == len(new_errored_classes):
-            return og_errored_classes == new_errored_classes
-
-        # if the new overall error class count is less than the old, then check
-        # if the new errored classes are a subset of the old errored classes
-        return new_errored_classes.issubset(og_errored_classes)
+        return True
 
     prune_iteration = 1
 
@@ -133,7 +120,7 @@ def multiround_prune(
             {},
             comparison_fn,
             options={
-                "skip_prune_disj_with_empty_conj": False,
+                "skip_prune_disj_with_empty_conj": True,
                 "skip_last_prune_disj": True,
             },
         )
@@ -142,7 +129,7 @@ def multiround_prune(
             "disj_prune_count_1",
             "unused_conjunctions_2",
             "conj_prune_count_3",
-            "prune_disj_with_empty_conj_count_4",
+            # "prune_disj_with_empty_conj_count_4",
         ]
 
         end_time = datetime.now()
@@ -156,9 +143,9 @@ def multiround_prune(
         log.info(
             f"\tPruned conjunction count: {prune_result_dict['conj_prune_count_3']}"
         )
-        log.info(
-            f"\tPruned disj with empty conj: {prune_result_dict['prune_disj_with_empty_conj_count_4']}"
-        )
+        # log.info(
+        #     f"\tPruned disj with empty conj: {prune_result_dict['prune_disj_with_empty_conj_count_4']}"
+        # )
 
         eval_log_fn(
             {"model_name": f"Plain NDNF - (Prune iteration: {prune_iteration})"}
@@ -257,7 +244,7 @@ def post_train_prune(cfg: DictConfig) -> None:
 
     ret_dicts: list[dict[str, float]] = []
     for fold_id, (train_index, test_index) in enumerate(skf.split(X, y)):
-        log.info(f"Fold {fold_id + 1} starts")
+        log.info(f"Fold {fold_id} starts")
         # Load model
         model_dir = (
             Path(eval_cfg["storage_dir"]) / run_dir_name / f"fold_{fold_id}"

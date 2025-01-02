@@ -265,7 +265,7 @@ def post_train_disentangle(cfg: DictConfig):
 
     ret_dicts: list[dict[str, float]] = []
     for fold_id, (train_index, test_index) in enumerate(skf.split(X, y)):
-        log.info(f"Fold {fold_id + 1} starts")
+        log.info(f"Fold {fold_id} starts")
         # Load model
         model_dir = (
             Path(eval_cfg["storage_dir"]) / run_dir_name / f"fold_{fold_id}"

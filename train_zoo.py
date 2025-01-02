@@ -183,8 +183,9 @@ def train_fold(
 
         if epoch % log_interval == 0:
             log.info(
-                "  Fold [%2d] [%3d] Train  Delta: %.3f  avg loss: %.3f  avg perf: %.3f"
-                % (fold_id + 1, epoch + 1, old_delta, avg_loss, avg_perf)
+                f"  Fold [{fold_id:2d}] [{epoch + 1:3d}] "
+                f"Train  Delta: {old_delta:.3f}  avg loss: {avg_loss:.3f}  "
+                f"avg perf: {avg_perf:.3f}"
             )
 
         # -------------------------------------------------------------------- #
@@ -235,7 +236,7 @@ def train_fold(
         assert isinstance(val_macro_jaccard, float)
         if epoch % log_interval == 0:
             log.info(
-                f"  Fold [{fold_id + 1:2d}] [{epoch + 1:3d}] "
+                f"  Fold [{fold_id:2d}] [{epoch + 1:3d}] "
                 f"Val                  avg loss: {val_avg_loss:.3f}  "
                 f"avg acc: {val_avg_acc:.3f}  "
                 f"sample jacc: {val_sample_jaccard:.3f}  "
@@ -320,7 +321,7 @@ def train(cfg: DictConfig, run_dir: Path) -> dict[str, float]:
     )
 
     for fold_id, (train_index, test_index) in enumerate(skf.split(X, y)):
-        log.info(f"Fold {fold_id + 1} starts")
+        log.info(f"Fold {fold_id} starts")
         model, fold_result = train_fold(
             fold_id,
             train_index,

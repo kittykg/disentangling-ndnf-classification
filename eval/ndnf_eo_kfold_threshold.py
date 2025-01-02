@@ -217,7 +217,7 @@ def post_train_threshold(cfg: DictConfig) -> None:
 
     ret_dicts: list[dict[str, Any]] = []
     for fold_id, (train_index, test_index) in enumerate(skf.split(X, y)):
-        log.info(f"Fold {fold_id + 1} starts")
+        log.info(f"Fold {fold_id} starts")
         # Load model
         model_dir = (
             Path(eval_cfg["storage_dir"]) / run_dir_name / f"fold_{fold_id}"
