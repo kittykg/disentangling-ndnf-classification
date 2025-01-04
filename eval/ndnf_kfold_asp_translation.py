@@ -82,16 +82,20 @@ def load_discretised_ndnf_model(
         model.load_state_dict(threshold_sd)
 
     else:
+        # Conjunction disentanglement
+        cd_version = eval_cfg.get("cd_version", None)
+        cd_version_str = f"_v{cd_version}" if cd_version is not None else ""
         disentangle_json_path = (
             model_dir
-            / f"fold_{fold_id}_{DISENTANGLED_RESULT_JSON_BASE_NAME}.json"
+            / f"fold_{fold_id}_{DISENTANGLED_RESULT_JSON_BASE_NAME}{cd_version_str}.json"
         )
         assert disentangle_json_path.exists(), (
             "Disentanglement result JSON not found. Run the disentanglement "
             "script first."
         )
         disentangle_sd_path = (
-            model_dir / f"{DISENTANGLED_MODEL_BASE_NAME}_fold_{fold_id}.pth"
+            model_dir
+            / f"{DISENTANGLED_MODEL_BASE_NAME}{cd_version_str}_fold_{fold_id}.pth"
         )
         assert disentangle_sd_path.exists(), (
             "Disentangled model not found. Run the disentanglement script "
@@ -131,10 +135,21 @@ def single_model_translate(
 
     # Check for checkpoints
     # If checkpoint exists, load it, else extract the rules from the model
-    translation_json_path = (
-        model_dir
-        / f"fold_{fold_id}_{ASP_TRANSLATION_THRESHOLDED_JSON_BASE_NAME if discretisation_method == 'threshold' else ASP_TRANSLATION_DISENTANGLED_JSON_BASE_NAME}.json"
-    )
+    if discretisation_method == "threshold":
+        translation_json_path = (
+            model_dir
+            / f"fold_{fold_id}_{ASP_TRANSLATION_THRESHOLDED_JSON_BASE_NAME}.json"
+        )
+        log.info("Discretisation method: thresholding")
+    else:
+        # Conjunction disentanglement
+        cd_version = cfg["eval"].get("cd_version", None)
+        cd_version_str = f"_v{cd_version}" if cd_version is not None else ""
+        translation_json_path = (
+            model_dir
+            / f"fold_{fold_id}_{ASP_TRANSLATION_DISENTANGLED_JSON_BASE_NAME}{cd_version_str}.json"
+        )
+        log.info(f"Discretisation method: disentanglement{cd_version_str}")
     if translation_json_path.exists():
         # The model has been disentangled, pruned and condensed
         with open(translation_json_path, "r") as f:
