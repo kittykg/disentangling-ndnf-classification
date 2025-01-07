@@ -37,7 +37,7 @@ def log_relevant_metadata(uci_dataset: dotdict) -> None:
     log.info(f"Number of features: {uci_dataset.metadata.num_features}")  # type: ignore
 
 
-@hydra.main(config_path="conf/dataset", config_name="zoo", version_base="1.2")
+@hydra.main(version_base=None, config_path="../conf/dataset", config_name="zoo")
 def convert_to_discrete_and_save(cfg: DictConfig) -> None:
     uci_dataset = fetch_ucirepo(id=cfg["ucimlrepo_id"])
     log_relevant_metadata(uci_dataset)

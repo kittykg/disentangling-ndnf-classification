@@ -2,6 +2,7 @@ import json
 import logging
 from pathlib import Path
 import random
+import sys
 import traceback
 
 import hydra
@@ -17,6 +18,15 @@ import wandb
 from neural_dnf.neural_dnf import BaseNeuralDNF, NeuralDNFEO
 from neural_dnf.utils import DeltaDelayedExponentialDecayScheduler
 
+file = Path(__file__).resolve()
+parent, root = file.parent, file.parents[1]
+sys.path.append(str(root))
+# Additionally remove the current file's directory from sys.path
+try:
+    sys.path.remove(str(parent))
+except ValueError:  # Already removed
+    pass
+
 from analysis import (
     MetricValueMeter,
     MultiClassAccuracyMeter,
@@ -24,7 +34,7 @@ from analysis import (
     collate,
     synthesize,
 )
-from data_utils_zoo import *
+from zoo.data_utils_zoo import *
 from utils import (
     construct_ndnf_based_model,
     post_to_discord_webhook,
@@ -359,7 +369,7 @@ def train(cfg: DictConfig, run_dir: Path) -> dict[str, float]:
     return avg_results
 
 
-@hydra.main(version_base=None, config_path="conf", config_name="config")
+@hydra.main(version_base=None, config_path="../conf", config_name="config")
 def run_experiment(cfg: DictConfig) -> None:
     # We expect the experiment name to be in the format of:
     # cub_{no. classes}_ndnf_{eo/plain}_...

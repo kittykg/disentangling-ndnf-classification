@@ -2,11 +2,11 @@ import json
 import logging
 from pathlib import Path
 import random
+import sys
 import traceback
 
 import hydra
 from hydra.core.hydra_config import HydraConfig
-
 import numpy as np
 import numpy.typing as npt
 from omegaconf import DictConfig, OmegaConf
@@ -20,13 +20,22 @@ import wandb
 from neural_dnf.neural_dnf import NeuralDNF
 from neural_dnf.utils import DeltaDelayedExponentialDecayScheduler
 
+file = Path(__file__).resolve()
+parent, root = file.parent, file.parents[1]
+sys.path.append(str(root))
+# Additionally remove the current file's directory from sys.path
+try:
+    sys.path.remove(str(parent))
+except ValueError:  # Already removed
+    pass
+
 from analysis import (
     MetricValueMeter,
     BinaryAccuracyMeter,
     collate,
     synthesize,
 )
-from data_utils_generic import GenericUCIDataset
+from data_utils import GenericUCIDataset
 from utils import post_to_discord_webhook, generate_weight_histogram
 
 
@@ -507,7 +516,7 @@ def train(cfg: DictConfig, run_dir: Path) -> dict[str, float]:
     return avg_results
 
 
-@hydra.main(version_base=None, config_path="conf", config_name="config")
+@hydra.main(version_base=None, config_path="../conf", config_name="config")
 def run_experiment(cfg: DictConfig) -> None:
     # We expect the experiment name to be in the format of:
     # cub_{no. classes}_ndnf_{eo/plain}_...

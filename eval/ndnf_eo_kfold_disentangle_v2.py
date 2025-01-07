@@ -42,7 +42,6 @@ except ValueError:  # Already removed
     pass
 
 from analysis import synthesize
-from data_utils_zoo import *
 from eval.ndnf_eval_common import (
     ndnf_based_model_eval,
     parse_eval_return_meters_with_logging,
@@ -56,6 +55,7 @@ from eval.ndnf_eval_common import (
 )
 from eval.ndnf_eo_kfold_prune import multiround_prune
 from utils import construct_ndnf_based_model, post_to_discord_webhook
+from zoo.data_utils_zoo import *
 
 
 log = logging.getLogger()
@@ -332,7 +332,9 @@ def single_model_disentangle(
             "disentangled_model_n_conjunctions": disentangled_model.conjunctions.out_features,
             "disentangled_model_n_out": disentangled_model.disjunctions.out_features,
             "intermediate_model_n_conjunctions": intermediate_model.conjunctions.out_features,
-            "intermediate_pre_threshold_log": ret["intermediate_pre_threshold_log"],
+            "intermediate_pre_threshold_log": ret[
+                "intermediate_pre_threshold_log"
+            ],
             "intermediate_thresholed_log": ret["intermediate_thresholed_log"],
             "intermediate_pruned_log": ret["intermediate_pruned_log"],
             "condensed_model_log": condensed_model_log,

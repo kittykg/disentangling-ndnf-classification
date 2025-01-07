@@ -34,7 +34,6 @@ except ValueError:  # Already removed
     pass
 
 from analysis import synthesize
-from data_utils_zoo import *
 from eval.asp_eval_common import (
     asp_eval,
     ASP_TRANSLATION_THRESHOLDED_JSON_BASE_NAME,
@@ -48,6 +47,7 @@ from eval.ndnf_eval_common import (
     DISENTANGLED_RESULT_JSON_BASE_NAME,
 )
 from utils import post_to_discord_webhook
+from zoo.data_utils_zoo import *
 
 
 log = logging.getLogger()

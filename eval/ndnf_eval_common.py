@@ -23,7 +23,7 @@ from analysis import (
     JaccardScoreMeter,
     ErrorMeter,
 )
-from data_utils_zoo import get_x_and_y_zoo
+from zoo.data_utils_zoo import get_x_and_y_zoo
 
 
 log = logging.getLogger()

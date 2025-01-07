@@ -1,11 +1,22 @@
 from pathlib import Path
+import sys
 
 import numpy as np
 import numpy.typing as npt
 import torch
 from torch import Tensor
 
-from data_utils_generic import GenericUCIDataset
+file = Path(__file__).resolve()
+parent, root = file.parent, file.parents[1]
+sys.path.append(str(root))
+# Additionally remove the current file's directory from sys.path
+try:
+    sys.path.remove(str(parent))
+except ValueError:  # Already removed
+    pass
+
+from data_utils import GenericUCIDataset
+
 
 NPZ_FILE_NAME = "zoo.npz"
 

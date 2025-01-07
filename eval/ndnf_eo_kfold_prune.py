@@ -35,7 +35,6 @@ except ValueError:  # Already removed
     pass
 
 from analysis import synthesize
-from data_utils_zoo import *
 from eval.ndnf_eval_common import (
     ndnf_based_model_eval,
     parse_eval_return_meters_with_logging,
@@ -46,6 +45,7 @@ from eval.ndnf_eval_common import (
     FIRST_PRUNE_MODEL_BASE_NAME,
 )
 from utils import construct_ndnf_based_model, post_to_discord_webhook
+from zoo.data_utils_zoo import *
 
 
 log = logging.getLogger()
