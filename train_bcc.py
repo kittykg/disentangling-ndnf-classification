@@ -11,6 +11,7 @@ import numpy as np
 import numpy.typing as npt
 from omegaconf import DictConfig, OmegaConf
 from sklearn.model_selection import StratifiedKFold
+from sklearn.preprocessing import StandardScaler
 import torch
 from torch import Tensor, nn
 from ucimlrepo import fetch_ucirepo
@@ -123,13 +124,6 @@ class BCCNeuralDNF(BCCClassifier):
         return torch.abs(p_t * (6 - torch.abs(p_t))).mean()
 
 
-breast_cancer_coimbra = fetch_ucirepo(id=451)
-data = breast_cancer_coimbra.data  # data is pandas DataFrame
-X = data.features.to_numpy().astype(np.float32)  # type: ignore
-y = data.targets.to_numpy().astype(np.float32).flatten() - 1  # type: ignore
-bcc_dataset = GenericUCIDataset(X, y)
-
-
 def loss_calculation(
     criterion: torch.nn.Module,
     y_hat: Tensor,
@@ -160,6 +154,7 @@ def train_fold(
     fold_id: int,
     train_index: npt.NDArray[np.int64],
     test_index: npt.NDArray[np.int64],
+    bcc_dataset: GenericUCIDataset,
     training_cfg: DictConfig,
     device: torch.device,
     use_wandb: bool,
@@ -449,6 +444,19 @@ def train(cfg: DictConfig, run_dir: Path) -> dict[str, float]:
         device = torch.device("cuda" if use_cuda else "cpu")
     log.info(f"Device: {device}")
 
+    # Get data
+    breast_cancer_coimbra = fetch_ucirepo(id=451)
+    data = breast_cancer_coimbra.data  # data is pandas DataFrame
+
+    X = data.features.to_numpy().astype(np.float32)  # type: ignore
+    if training_cfg.get("standardise", False):
+        scaler = StandardScaler()
+        X = scaler.fit_transform(X)
+
+    y = data.targets.to_numpy().astype(np.float32).flatten() - 1  # type: ignore
+
+    bcc_dataset = GenericUCIDataset(X, y)
+
     # Fold results
     models = []
     fold_results = []
@@ -463,7 +471,13 @@ def train(cfg: DictConfig, run_dir: Path) -> dict[str, float]:
     for fold_id, (train_index, test_index) in enumerate(skf.split(X, y)):
         log.info(f"Fold {fold_id} starts")
         model, fold_result = train_fold(
-            fold_id, train_index, test_index, training_cfg, device, use_wandb
+            fold_id,
+            train_index,
+            test_index,
+            bcc_dataset,
+            training_cfg,
+            device,
+            use_wandb,
         )
 
         fold_dir = run_dir / f"fold_{fold_id}"
