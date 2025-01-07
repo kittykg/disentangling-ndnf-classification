@@ -66,61 +66,17 @@ class MetricValueMeter(Meter):
         }
 
 
-class BinaryAccuracyMeter(Meter):
-    accuracy_list: list[float]
-
-    def __init__(self):
-        super(BinaryAccuracyMeter, self).__init__()
-        self.accuracy_list = []
-
-    def update(self, output: Tensor, target: Tensor) -> None:
-        """
-        Update the accumulated sample counts and correct counts.
-
-        Pre-conditions:
-          - `output` and `target` are of the same type of tensor
-          - `output` and `target` should both be binary
-          - `output` would be in the dimension of N x 1 or N.
-        """
-        starting_len = len(self.accuracy_list)
-        output = output.squeeze(-1)
-
-        n_sample = len(output)
-        n_correct = torch.sum(output == target).item()
-
-        self.accuracy_list.append(n_correct / n_sample)
-        ending_len = len(self.accuracy_list)
-
-        if ending_len - starting_len != 1:
-            print("Big error")
-
-    def get_average(self) -> float:
-        return torch.mean(torch.Tensor(self.accuracy_list)).item()
-
-    def reset(self) -> None:
-        self.accuracy_list = []
-
-    def to_dict(self) -> dict[str, float]:
-        return {"accuracy": self.get_average()}
-
-
-class MultiClassAccuracyMeter(Meter):
+class GenericAccuracyMeter(Meter):
     outputs: torch.Tensor
     targets: torch.Tensor
 
     def __init__(self):
-        super(MultiClassAccuracyMeter, self).__init__()
+        super(GenericAccuracyMeter, self).__init__()
         self.outputs = torch.tensor([])
         self.targets = torch.tensor([])
 
     def update(self, output: Tensor, target: Tensor) -> None:
-        """
-        Accumulate the output and target. The output will be taken the argmax
-        as the predicted class.
-        """
-        y_pred = torch.max(output, 1).indices
-        self.targets = torch.cat([self.targets, target.detach().cpu()], dim=0)
-        self.outputs = torch.cat([self.outputs, y_pred.detach().cpu()], dim=0)
+        raise NotImplementedError
 
     def get_average(self) -> float:
         return float(accuracy_score(self.targets.int(), self.outputs.int()))
@@ -131,6 +87,31 @@ class MultiClassAccuracyMeter(Meter):
 
     def to_dict(self) -> dict[str, float]:
         return {"accuracy": self.get_average()}
+
+
+class BinaryAccuracyMeter(GenericAccuracyMeter):
+    def update(self, output: Tensor, target: Tensor) -> None:
+        """
+        Accumulate the output and target.
+
+        Pre-conditions:
+          - `output` and `target` are of the same type of tensor
+          - `output` and `target` should both be binary
+          - `output` would be in the dimension of N x 1 or N.
+        """
+        self.targets = torch.cat([self.targets, target.detach().cpu()], dim=0)
+        self.outputs = torch.cat([self.outputs, output.detach().cpu()], dim=0)
+
+
+class MultiClassAccuracyMeter(Meter):
+    def update(self, output: Tensor, target: Tensor) -> None:
+        """
+        Accumulate the output and target. The output will be taken the argmax
+        as the predicted class.
+        """
+        y_pred = torch.max(output, 1).indices
+        self.targets = torch.cat([self.targets, target.detach().cpu()], dim=0)
+        self.outputs = torch.cat([self.outputs, y_pred.detach().cpu()], dim=0)
 
 
 class JaccardScoreMeter(Meter):

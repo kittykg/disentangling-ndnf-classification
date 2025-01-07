@@ -44,7 +44,7 @@ def loss_calculation(
 ) -> dict[str, Tensor]:
     base_loss = criterion(y_hat, y)
 
-    # Weight regularization loss
+    # Weight regularisation loss
     p_t = torch.cat(
         [
             parameter.view(-1)
@@ -54,7 +54,7 @@ def loss_calculation(
     )
     weight_reg_loss = torch.abs(p_t * (6 - torch.abs(p_t))).mean()
 
-    # Conjunction regularization loss (push to ±1)
+    # Conjunction regularisation loss (push to ±1)
     conj_reg_loss = (1 - conj_out.abs()).mean()
 
     return {

@@ -1,0 +1,23 @@
+experiment_name: bcc_mlp_l64x64_b8_e500
+seed: null
+
+use_cuda: True
+use_mps: False
+
+log_interval: 100
+
+k_folds: 5
+
+model_type: mlp
+
+optimiser: adam
+optimiser_lr: 0.001
+optimiser_weight_decay: 0.00004
+scheduler_step: 100
+loss_func: bce_logit
+batch_size: 8
+loader_num_workers: 0
+epochs: 500
+
+aux_loss:
+  weight_l1_mod_lambda: 1e-3
