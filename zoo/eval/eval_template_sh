@@ -1,0 +1,48 @@
+export CUDA_VISIBLE_DEVICES=???
+ZOO_FOLDER=???
+
+# Zoo, NDNF-EO, Prune
+# python zoo/eval/ndnf_eo_kfold_prune.py \
+#     +eval=ndnf_eo_zoo_eval \
+#     ++eval.storage_dir=$ZOO_FOLDER \
+#     dataset=zoo
+
+# Zoo, NDNF-EO, Threshold
+# python zoo/eval/ndnf_eo_kfold_threshold.py \
+#     +eval=ndnf_eo_zoo_eval \
+#     ++eval.storage_dir=$ZOO_FOLDER \
+#     dataset=zoo
+
+# Zoo, NDNF-EO, Disentanglement, v1
+# python zoo/eval/ndnf_eo_kfold_disentangle.py \
+#     +eval=ndnf_eo_zoo_eval \
+#     ++eval.storage_dir=$ZOO_FOLDER \
+#     dataset=zoo
+
+# Zoo, NDNF-EO, Disentanglement, v2
+# python zoo/eval/ndnf_eo_kfold_disentangle_v2.py \
+#     +eval=ndnf_eo_zoo_eval \
+#     ++eval.storage_dir=$ZOO_FOLDER \
+#     dataset=zoo
+
+# Zoo, NDNF-EO, ASP Translation, Threshold
+# python zoo/eval/ndnf_kfold_asp_translation.py \
+#     +eval=ndnf_eo_zoo_eval \
+#     ++eval.discretisation_method=threshold \
+#     ++eval.storage_dir=$ZOO_FOLDER \
+#     dataset=zoo
+
+# Zoo, NDNF-EO, ASP Translation, Disentanglement, v1
+# python zoo/eval/ndnf_kfold_asp_translation.py \
+#     +eval=ndnf_eo_zoo_eval \
+#     ++eval.discretisation_method=disentangle \
+#     ++eval.storage_dir=$ZOO_FOLDER \
+#     dataset=zoo
+
+# Zoo, NDNF-EO, ASP Translation, Disentanglement, v2
+# python zoo/eval/ndnf_kfold_asp_translation.py \
+#     +eval=ndnf_eo_zoo_eval \
+#     ++eval.discretisation_method=disentangle \
+#     ++eval.cd_version=2 \
+#     ++eval.storage_dir=$ZOO_FOLDER \
+#     dataset=zoo
