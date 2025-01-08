@@ -29,7 +29,7 @@ except ValueError:  # Already removed
 
 from analysis import (
     MetricValueMeter,
-    MultiClassAccuracyMeter,
+    AccuracyMeter,
     JaccardScoreMeter,
     collate,
     synthesize,
@@ -144,7 +144,7 @@ def train_fold(
             "weight_reg_loss": MetricValueMeter("weight_reg_loss_meter"),
             "conj_reg_loss": MetricValueMeter("conj_reg_loss_meter"),
         }
-        train_perf_score_meter = MultiClassAccuracyMeter()
+        train_perf_score_meter = AccuracyMeter()
         model.train()
 
         for data in train_loader:
@@ -202,7 +202,7 @@ def train_fold(
         # 2. Evaluate performance on val
         # -------------------------------------------------------------------- #
         epoch_val_loss_meter = MetricValueMeter("val_loss_meter")
-        epoch_val_acc_meter = MultiClassAccuracyMeter()
+        epoch_val_acc_meter = AccuracyMeter()
         epoch_val_jacc_meter = JaccardScoreMeter()
 
         model.eval()

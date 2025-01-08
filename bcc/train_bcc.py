@@ -29,12 +29,7 @@ try:
 except ValueError:  # Already removed
     pass
 
-from analysis import (
-    MetricValueMeter,
-    BinaryAccuracyMeter,
-    collate,
-    synthesize,
-)
+from analysis import MetricValueMeter, AccuracyMeter, collate, synthesize
 from data_utils import GenericUCIDataset
 from utils import post_to_discord_webhook, generate_weight_histogram
 
@@ -242,6 +237,10 @@ def train_fold(
     # Other training settings
     gen_weight_hist = training_cfg.get("gen_weight_hist", False)
     log_interval = training_cfg.get("log_interval", 100)
+    if isinstance(model, BCCNeuralDNF):
+        acc_meter_conversion_fn = lambda y_hat: y_hat > 0.5
+    else:
+        acc_meter_conversion_fn = lambda y_hat: torch.sigmoid(y_hat) > 0.5
 
     for epoch in range(training_cfg["epochs"]):
         # -------------------------------------------------------------------- #
@@ -259,7 +258,7 @@ def train_fold(
             train_loss_meters["invented_predicates_reg_loss"] = (
                 MetricValueMeter("invented_predicates_reg_loss_meter")
             )
-        train_acc_meter = BinaryAccuracyMeter()
+        train_acc_meter = AccuracyMeter(acc_meter_conversion_fn)
 
         model.train()
 
@@ -302,11 +301,7 @@ def train_fold(
             for key, loss_val in loss_dict.items():
                 train_loss_meters[key].update(loss_val.item())
             train_loss_meters["overall_loss"].update(loss.item())
-
-            if isinstance(model, BCCNeuralDNF):
-                train_acc_meter.update(y_hat > 0.5, y)
-            else:
-                train_acc_meter.update(torch.sigmoid(y_hat) > 0.5, y)
+            train_acc_meter.update(y_hat, y)
 
         if isinstance(model, BCCNeuralDNF):
             # Update delta value
@@ -346,7 +341,9 @@ def train_fold(
         # 2. Evaluate performance on val
         # -------------------------------------------------------------------- #
         epoch_val_loss_meter = MetricValueMeter("val_loss_meter")
-        epoch_val_acc_meter = BinaryAccuracyMeter()
+        epoch_val_acc_meter = AccuracyMeter(
+            output_to_prediction_fn=acc_meter_conversion_fn
+        )
 
         model.eval()
 
@@ -382,10 +379,7 @@ def train_fold(
 
                 # Update meters
                 epoch_val_loss_meter.update(loss.item())
-                if isinstance(model, BCCNeuralDNF):
-                    epoch_val_acc_meter.update(y_hat > 0.5, y)
-                else:
-                    epoch_val_acc_meter.update(torch.sigmoid(y_hat) > 0.5, y)
+                epoch_val_acc_meter.update(y_hat, y)
 
         val_avg_loss = epoch_val_loss_meter.get_average()
         val_avg_acc = epoch_val_acc_meter.get_average()

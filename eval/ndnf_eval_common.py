@@ -17,12 +17,7 @@ try:
 except ValueError:  # Already removed
     pass
 
-from analysis import (
-    Meter,
-    MultiClassAccuracyMeter,
-    JaccardScoreMeter,
-    ErrorMeter,
-)
+from analysis import Meter, AccuracyMeter, JaccardScoreMeter, ErrorMeter
 from zoo.data_utils_zoo import get_x_and_y_zoo
 
 
@@ -51,23 +46,23 @@ def ndnf_based_model_eval(
 ) -> dict[str, Meter]:
     model.eval()
     jacc_meter = JaccardScoreMeter()
-    acc_meter = MultiClassAccuracyMeter()
+    acc_meter = AccuracyMeter()
     error_meter = ErrorMeter()
-    iter_jacc_perf_meter = JaccardScoreMeter()
-    iter_acc_perf_meter = MultiClassAccuracyMeter()
+    iter_jacc_meter = JaccardScoreMeter()
+    iter_acc_meter = AccuracyMeter()
 
     for i, data in enumerate(data_loader):
         with torch.no_grad():
             x, y = get_x_and_y_zoo(data, device, use_ndnf=True)
             y_hat = model(x)
 
-        iter_acc_perf_meter.update(y_hat, y)
+        iter_acc_meter.update(y_hat, y)
         acc_meter.update(y_hat, y)
 
         # To get the jaccard score, we need to threshold the tanh activation
         # to get the binary prediction of each class
         y_hat = (torch.tanh(y_hat) > 0).long()
-        iter_jacc_perf_meter.update(y_hat, y)
+        iter_jacc_meter.update(y_hat, y)
         jacc_meter.update(y_hat, y)
         error_meter.update(y_hat, y)
 
@@ -76,13 +71,13 @@ def ndnf_based_model_eval(
                 "[%3d] Test -- avg acc: %.3f -- avg jacc: %.3f"
                 % (
                     i + 1,
-                    iter_acc_perf_meter.get_average(),
-                    iter_jacc_perf_meter.get_average(),
+                    iter_acc_meter.get_average(),
+                    iter_jacc_meter.get_average(),
                 )
             )
 
-        iter_acc_perf_meter.reset()
-        iter_jacc_perf_meter.reset()
+        iter_acc_meter.reset()
+        iter_jacc_meter.reset()
 
     if do_logging:
         log.info(

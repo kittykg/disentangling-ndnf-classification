@@ -16,12 +16,7 @@ try:
 except ValueError:  # Already removed
     pass
 
-from analysis import (
-    Meter,
-    MultiClassAccuracyMeter,
-    JaccardScoreMeter,
-    ErrorMeter,
-)
+from analysis import Meter, AccuracyMeter, JaccardScoreMeter, ErrorMeter
 
 
 log = logging.getLogger()
@@ -105,7 +100,7 @@ def asp_eval(
     ground_truth_tensor = torch.tensor(ground_truth, dtype=torch.long)
 
     jacc_meter = JaccardScoreMeter()
-    acc_meter = MultiClassAccuracyMeter()
+    acc_meter = AccuracyMeter()
     err_meter = ErrorMeter()
 
     jacc_meter.update(prediction_tensor, ground_truth_tensor)
