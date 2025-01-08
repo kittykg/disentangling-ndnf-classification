@@ -27,7 +27,7 @@ from neural_dnf.post_training import (
 )
 
 file = Path(__file__).resolve()
-parent, root = file.parent, file.parents[1]
+parent, root = file.parent.parent, file.parent.parents[1]
 sys.path.append(str(root))
 # Additionally remove the current file's directory from sys.path
 try:
@@ -36,7 +36,9 @@ except ValueError:  # Already removed
     pass
 
 from analysis import synthesize
-from eval.ndnf_eval_common import (
+from utils import construct_ndnf_based_model, post_to_discord_webhook
+from zoo.data_utils_zoo import *
+from zoo.eval.ndnf_eval_common import (
     ndnf_based_model_eval,
     parse_eval_return_meters_with_logging,
     DEFAULT_GEN_SEED,
@@ -46,9 +48,7 @@ from eval.ndnf_eval_common import (
     THRESHOLD_MODEL_BASE_NAME,
     THRESHOLD_RESULT_JSON_BASE_NAME,
 )
-from eval.ndnf_eo_kfold_prune import multiround_prune
-from utils import construct_ndnf_based_model, post_to_discord_webhook
-from zoo.data_utils_zoo import *
+from zoo.eval.ndnf_eo_kfold_prune import multiround_prune
 
 
 log = logging.getLogger()
@@ -271,7 +271,7 @@ def post_train_threshold(cfg: DictConfig) -> None:
         log.info(f"{k}: {v:.3f}")
 
 
-@hydra.main(version_base=None, config_path="../conf", config_name="config")
+@hydra.main(version_base=None, config_path="../../conf", config_name="config")
 def run_eval(cfg: DictConfig) -> None:
     # Set random seed
     torch.manual_seed(DEFAULT_GEN_SEED)

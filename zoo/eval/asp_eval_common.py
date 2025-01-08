@@ -8,7 +8,7 @@ import numpy as np
 import torch
 
 file = Path(__file__).resolve()
-parent, root = file.parent, file.parents[1]
+parent, root = file.parent.parent, file.parent.parents[1]
 sys.path.append(str(root))
 # Additionally remove the current file's directory from sys.path
 try:

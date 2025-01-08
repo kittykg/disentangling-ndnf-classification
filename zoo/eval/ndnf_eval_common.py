@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 from neural_dnf.neural_dnf import BaseNeuralDNF
 
 file = Path(__file__).resolve()
-parent, root = file.parent, file.parents[1]
+parent, root = file.parent.parent, file.parent.parents[1]
 sys.path.append(str(root))
 # Additionally remove the current file's directory from sys.path
 try:
@@ -29,7 +29,6 @@ DEFAULT_LOADER_BATCH_SIZE = 64
 DEFAULT_LOADER_NUM_WORKERS = 0
 
 AFTER_TRAIN_MODEL_BASE_NAME = "model"
-# AFTER_TRAIN_MULTIRUN_EVAL_RESULT_JSON = "multirun_eval_result.json"
 FIRST_PRUNE_MODEL_BASE_NAME = "model_mr_pruned"
 THRESHOLD_MODEL_BASE_NAME = "model_thresholded"
 THRESHOLD_RESULT_JSON_BASE_NAME = "threshold_result"

@@ -25,7 +25,7 @@ from neural_dnf import NeuralDNF
 from neural_dnf.post_training import extract_asp_rules
 
 file = Path(__file__).resolve()
-parent, root = file.parent, file.parents[1]
+parent, root = file.parent.parent, file.parent.parents[1]
 sys.path.append(str(root))
 # Additionally remove the current file's directory from sys.path
 try:
@@ -34,20 +34,20 @@ except ValueError:  # Already removed
     pass
 
 from analysis import synthesize
-from eval.asp_eval_common import (
+from utils import post_to_discord_webhook
+from zoo.data_utils_zoo import *
+from zoo.eval.asp_eval_common import (
     asp_eval,
     ASP_TRANSLATION_THRESHOLDED_JSON_BASE_NAME,
     ASP_TRANSLATION_DISENTANGLED_JSON_BASE_NAME,
 )
-from eval.ndnf_eval_common import (
+from zoo.eval.ndnf_eval_common import (
     parse_eval_return_meters_with_logging,
     DEFAULT_GEN_SEED,
     THRESHOLD_MODEL_BASE_NAME,
     DISENTANGLED_MODEL_BASE_NAME,
     DISENTANGLED_RESULT_JSON_BASE_NAME,
 )
-from utils import post_to_discord_webhook
-from zoo.data_utils_zoo import *
 
 
 log = logging.getLogger()
@@ -228,7 +228,7 @@ def post_train_asp_translate(cfg: DictConfig):
         log.info(f"{k}: {v:.3f}")
 
 
-@hydra.main(version_base=None, config_path="../conf", config_name="config")
+@hydra.main(version_base=None, config_path="../../conf", config_name="config")
 def run_eval(cfg: DictConfig) -> None:
     # Set random seed
     torch.manual_seed(DEFAULT_GEN_SEED)
