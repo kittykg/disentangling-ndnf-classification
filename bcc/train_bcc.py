@@ -11,13 +11,10 @@ import numpy as np
 import numpy.typing as npt
 from omegaconf import DictConfig, OmegaConf
 from sklearn.model_selection import StratifiedKFold
-from sklearn.preprocessing import StandardScaler
 import torch
 from torch import Tensor, nn
-from ucimlrepo import fetch_ucirepo
 import wandb
 
-from neural_dnf.neural_dnf import NeuralDNF
 from neural_dnf.utils import DeltaDelayedExponentialDecayScheduler
 
 file = Path(__file__).resolve()
@@ -33,99 +30,11 @@ from analysis import MetricValueMeter, AccuracyMeter, collate, synthesize
 from data_utils import GenericUCIDataset
 from utils import post_to_discord_webhook, generate_weight_histogram
 
+from bcc.data_utils_bcc import get_bcc_data
+from bcc.models import BCCClassifier, BCCMLP, BCCNeuralDNF
+
 
 log = logging.getLogger()
-
-
-class BCCClassifier(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, x: Tensor) -> Tensor:
-        raise NotImplementedError
-
-    def get_weight_reg_loss(self) -> Tensor:
-        raise NotImplementedError
-
-
-class BCCMLP(BCCClassifier):
-    def __init__(self, num_features: int):
-        super().__init__()
-
-        self.mlp = nn.Sequential(
-            nn.Linear(num_features, 64),
-            nn.ReLU(),
-            nn.Linear(64, 64),
-            nn.ReLU(),
-            nn.Linear(64, 1),
-        )
-
-    def forward(self, x: Tensor) -> Tensor:
-        return self.mlp(x)
-
-    def get_weight_reg_loss(self) -> Tensor:
-        # L1 regularisation
-        p_t = torch.cat(
-            [
-                parameter.view(-1)
-                for parameter in self.parameters()
-                if parameter.requires_grad
-            ]
-        )
-        return p_t.abs().mean()
-
-
-class BCCNeuralDNF(BCCClassifier):
-    def __init__(
-        self,
-        num_features: int,
-        invented_predicate_per_input: int,
-        num_conjunctions: int,
-        uniform_init_boundary: float = 5,
-    ):
-        super().__init__()
-
-        self.predicate_inventor = nn.Parameter(
-            torch.empty(num_features, invented_predicate_per_input)
-        )  # P x Q
-        nn.init.uniform_(self.predicate_inventor, a=0, b=uniform_init_boundary)
-
-        self.ndnf = NeuralDNF(
-            n_in=num_features * invented_predicate_per_input,
-            n_conjunctions=num_conjunctions,
-            n_out=1,
-            delta=1.0,
-        )
-
-    def get_invented_predicates(self, x: Tensor) -> Tensor:
-        # x: B x P
-        x = torch.tanh(x.unsqueeze(-1) - self.predicate_inventor)
-        # x: B x P x Q, x \in (-1, 1)
-        x = x.flatten(start_dim=1)
-        # x: B x (P * Q)
-        return x
-
-    def get_conjunction(self, x: Tensor) -> Tensor:
-        # x: B x P
-        x = self.get_invented_predicates(x)
-        # x: B x (P * Q)
-        return self.ndnf.get_conjunction(x)
-
-    def forward(self, x: Tensor) -> Tensor:
-        # x: B x P
-        x = self.get_invented_predicates(x)
-        # x: B x (P * Q)
-        return self.ndnf(x)
-
-    def get_weight_reg_loss(self) -> Tensor:
-        p_t = torch.cat(
-            [
-                parameter.view(-1)
-                for parameter in self.ndnf.parameters()
-                if parameter.requires_grad
-            ]
-        )
-        return torch.abs(p_t * (6 - torch.abs(p_t))).mean()
 
 
 def loss_calculation(
@@ -448,16 +357,7 @@ def train(cfg: DictConfig, run_dir: Path) -> dict[str, float]:
     log.info(f"Device: {device}")
 
     # Get data
-    breast_cancer_coimbra = fetch_ucirepo(id=451)
-    data = breast_cancer_coimbra.data  # data is pandas DataFrame
-
-    X = data.features.to_numpy().astype(np.float32)  # type: ignore
-    if training_cfg.get("standardise", False):
-        scaler = StandardScaler()
-        X = scaler.fit_transform(X)
-
-    y = data.targets.to_numpy().astype(np.float32).flatten() - 1  # type: ignore
-
+    X, y = get_bcc_data(standardise=training_cfg["standardise"])
     bcc_dataset = GenericUCIDataset(X, y)
 
     # Fold results

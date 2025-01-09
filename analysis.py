@@ -1,7 +1,13 @@
 from collections import Counter, OrderedDict
 from typing import Any, Callable
 
-from sklearn.metrics import accuracy_score, jaccard_score
+from sklearn.metrics import (
+    accuracy_score,
+    f1_score,
+    jaccard_score,
+    precision_score,
+    recall_score,
+)
 import numpy as np
 import torch
 from torch import Tensor
@@ -105,6 +111,28 @@ class AccuracyMeter(Meter):
 
     def to_dict(self) -> dict[str, float]:
         return {"accuracy": self.get_average()}
+
+    def get_other_classification_metrics(self) -> dict[str, float]:
+        # TODO: https://github.com/scikit-learn/scikit-learn/issues/29107
+        # There is some bug with scikit-learn with device checking, the
+        # following code will not work. Waiting for 1.6.1 bug fix release
+        # return {
+        #     "precision": float(
+        #         precision_score(self.targets.int(), self.outputs.int())
+        #     ),
+        #     "recall": float(
+        #         recall_score(self.targets.int(), self.outputs.int())
+        #     ),
+        #     "f1": float(f1_score(self.targets.int(), self.outputs.int())),
+        # }
+        t_np = self.targets.int().numpy()
+        o_np = self.outputs.int().numpy()
+
+        return {
+            "precision": float(precision_score(t_np, o_np)),
+            "recall": float(recall_score(t_np, o_np)),
+            "f1": float(f1_score(t_np, o_np)),
+        }
 
 
 class JaccardScoreMeter(Meter):

@@ -1,0 +1,15 @@
+experiment_name: bcc_ndnf_std_ip4_nc32_b8_e500
+
+use_cuda: True
+use_mps: False
+
+seed: 8493
+k_folds: 5
+
+model_type: ndnf
+model_architecture:
+  invented_predicate_per_input: 4
+  n_conjunctions: 32
+
+discretisation_method: threshold # 'threshold' or 'disentangle'
+storage_dir: ??? # overwrite this
