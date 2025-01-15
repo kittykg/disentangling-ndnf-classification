@@ -98,9 +98,7 @@ def bcc_classifier_eval(
             f"F1: {f1:.3f}"
         )
 
-    return {
-        "acc_meter": acc_meter,
-    }
+    return {"acc_meter": acc_meter}
 
 
 def parse_eval_return_meters_with_logging(

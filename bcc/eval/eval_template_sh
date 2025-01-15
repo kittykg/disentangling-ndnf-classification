@@ -1,0 +1,41 @@
+export CUDA_VISIBLE_DEVICES=???
+BCC_FOLDER=???
+
+# BCC, NDNF, Prune
+# python bcc/eval/ndnf_kfold_prune.py \
+#     +eval=bcc_ndnf_eval \
+#     ++eval.storage_dir=$BCC_FOLDER \
+
+# BCC, NDNF, Threshold
+# python bcc/eval/ndnf_kfold_threshold.py \
+#     +eval=bcc_ndnf_eval \
+#     ++eval.storage_dir=$BCC_FOLDER \
+
+# BCC, NDNF, Disentanglement, v1
+# python bcc/eval/ndnf_kfold_disentangle.py \
+#     +eval=bcc_ndnf_eval \
+#     ++eval.storage_dir=$BCC_FOLDER \
+
+# BCC, NDNF, Disentanglement, v2
+# python bcc/eval/ndnf_kfold_disentangle_v2.py \
+#     +eval=bcc_ndnf_eval \
+#     ++eval.storage_dir=$BCC_FOLDER \
+
+# BCC, NDNF, ASP Translation, Threshold
+# python bcc/eval/ndnf_kfold_asp_translation.py \
+#     +eval=bcc_ndnf_eval \
+#     ++eval.discretisation_method=threshold \
+#     ++eval.storage_dir=$BCC_FOLDER \
+
+# BCC, NDNF, ASP Translation, Disentanglement, v1
+# python bcc/eval/ndnf_kfold_asp_translation.py \
+#     +eval=bcc_ndnf_eval \
+#     ++eval.discretisation_method=disentangle \
+#     ++eval.storage_dir=$BCC_FOLDER \
+
+# BCC, NDNF, ASP Translation, Disentanglement, v2
+# python bcc/eval/ndnf_kfold_asp_translation.py \
+#     +eval=bcc_ndnf_eval \
+#     ++eval.discretisation_method=disentangle \
+#     ++eval.cd_version=2 \
+#     ++eval.storage_dir=$BCC_FOLDER \

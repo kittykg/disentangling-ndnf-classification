@@ -1,8 +1,9 @@
 """
-This script thresholds pruned plain NDNF. The input NDNF models are strictly
-after pruning stage in the post-training processing pipeline. The thresholded
-NDNF model are stored and evaluated. The evaluation metrics include accuracy,
-sample Jaccard, macro Jaccard, and error metrics.
+This script thresholds pruned NDNF in a BCC NeuralDNF model. The input model's
+NDNF models are strictly after pruning stage in the post-training processing
+pipeline. The BCC NeuralDNF models with their NDNF models thresholded are stored
+and evaluated. The evaluation metrics include accuracy, precision, recall, and
+F1 score.
 """
 
 import json
@@ -20,7 +21,6 @@ from sklearn.model_selection import StratifiedKFold
 import torch
 from torch.utils.data import DataLoader
 
-from neural_dnf import NeuralDNFEO, NeuralDNF
 from neural_dnf.post_training import (
     get_thresholding_upper_bound,
     apply_threshold,
@@ -35,11 +35,14 @@ try:
 except ValueError:  # Already removed
     pass
 
-from analysis import synthesize
-from utils import construct_ndnf_based_model, post_to_discord_webhook
-from zoo.data_utils_zoo import *
-from zoo.eval.ndnf_eval_common import (
-    ndnf_based_model_eval,
+from analysis import AccuracyMeter, synthesize
+from data_utils import GenericUCIDataset
+from utils import post_to_discord_webhook
+
+
+from bcc.data_utils_bcc import get_bcc_data
+from bcc.eval.ndnf_eval_common import (
+    bcc_classifier_eval,
     parse_eval_return_meters_with_logging,
     DEFAULT_GEN_SEED,
     DEFAULT_LOADER_BATCH_SIZE,
@@ -48,7 +51,8 @@ from zoo.eval.ndnf_eval_common import (
     THRESHOLD_MODEL_BASE_NAME,
     THRESHOLD_RESULT_JSON_BASE_NAME,
 )
-from zoo.eval.ndnf_eo_kfold_prune import multiround_prune
+from bcc.eval.ndnf_kfold_prune import multiround_prune
+from bcc.models import BCCNeuralDNF
 
 
 log = logging.getLogger()
@@ -56,60 +60,59 @@ log = logging.getLogger()
 
 def single_model_threshold(
     fold_id: int,
-    model: NeuralDNF,
+    model: BCCNeuralDNF,
     device: torch.device,
     train_loader: DataLoader,
     val_loader: DataLoader,
     model_dir: Path,
 ) -> dict[str, Any]:
     def _eval_with_log_wrapper(model_name: str) -> dict[str, Any]:
-        eval_meters = ndnf_based_model_eval(model, device, val_loader)
+        eval_meters = bcc_classifier_eval(model, device, val_loader)
         return parse_eval_return_meters_with_logging(eval_meters, model_name)
 
     # Stage 1: Evaluate the pruned model
-    prune_log = _eval_with_log_wrapper("Pruned NDNF model")
+    prune_log = _eval_with_log_wrapper("Pruned BCC NDNF model")
     log.info("------------------------------------------")
 
     # Stage 2: Threshold + after threshold prune
     def threshold(do_logging: bool = False) -> dict[str, Any]:
         log.info("Thresholding the model...")
 
-        og_conj_weight = model.conjunctions.weights.data.clone()
-        og_disj_weight = model.disjunctions.weights.data.clone()
+        og_conj_weight = model.ndnf.conjunctions.weights.data.clone()
+        og_disj_weight = model.ndnf.disjunctions.weights.data.clone()
 
-        threshold_upper_bound = get_thresholding_upper_bound(model)
+        threshold_upper_bound = get_thresholding_upper_bound(model.ndnf)
         log.info(f"Threshold upper bound: {threshold_upper_bound}")
 
         t_vals = torch.arange(0, threshold_upper_bound, 0.01)
         result_dicts_with_t_val = []
         for v in t_vals:
-            apply_threshold(model, og_conj_weight, og_disj_weight, v)
-            threshold_eval_dict = ndnf_based_model_eval(
+            apply_threshold(model.ndnf, og_conj_weight, og_disj_weight, v)
+            threshold_eval_dict = bcc_classifier_eval(
                 model, device, train_loader
             )
-            sample_jacc: float = threshold_eval_dict["jacc_meter"].get_average(
-                "samples"  # type: ignore
-            )
-            overall_error_rate: float = threshold_eval_dict[
-                "error_meter"  # type: ignore
-            ].get_average()["overall_error_rate"]
-            acc: float = threshold_eval_dict["acc_meter"].get_average()
+            acc_meter: AccuracyMeter = threshold_eval_dict["acc_meter"]  # type: ignore
+            accuracy = acc_meter.get_average()
+            other_metrics = acc_meter.get_other_classification_metrics()
+            precision = other_metrics["precision"]
+            recall = other_metrics["recall"]
+            f1 = other_metrics["f1"]
 
             result_dicts_with_t_val.append(
                 {
                     "t_val": v.item(),
-                    "sample_jacc": sample_jacc,
-                    "overall_error_rate": overall_error_rate,
-                    "acc": acc,
+                    "accuracy": accuracy,
+                    "precision": precision,
+                    "recall": recall,
+                    "f1": f1,
                 }
             )
 
         sorted_result_dicts: list[dict[str, float]] = sorted(
             result_dicts_with_t_val,
             key=lambda x: (
-                x["sample_jacc"],
-                -x["overall_error_rate"],
-                x["acc"],
+                x["accuracy"],
+                x["f1"],
             ),
             reverse=True,
         )
@@ -120,16 +123,17 @@ def single_model_threshold(
                 log.info(
                     f"-- Candidate {i + 1} --\n"
                     f"\tt_val: {d['t_val']:.2f}  "
-                    f"Sample Jacc: {d['sample_jacc']:.3f}  "
-                    f"Overall error rate: {d['overall_error_rate']:.3f}  "
-                    f"Acc: {d['acc']:.3f}"
+                    f"Acc: {d['accuracy']:.3f}  "
+                    f"Precision: {d['precision']:.3f}  "
+                    f"Recall: {d['recall']:.3f}  "
+                    f"F1: {d['f1']:.3f}"
                 )
 
         # Apply the best threshold
         best_t_val = sorted_result_dicts[0]["t_val"]
-        apply_threshold(model, og_conj_weight, og_disj_weight, best_t_val)
+        apply_threshold(model.ndnf, og_conj_weight, og_disj_weight, best_t_val)
         intermediate_log = _eval_with_log_wrapper(
-            f"Thresholded NDNF model (t={best_t_val})"
+            f"Thresholded model (t={best_t_val})"
         )
         log.info("------------------------------------------")
 
@@ -203,10 +207,8 @@ def post_train_threshold(cfg: DictConfig) -> None:
     log.info(f"Device: {device}")
 
     # Load data
-    X, y, feature_names = get_zoo_data_np_from_path(
-        data_dir_path=Path(cfg["dataset"]["save_dir"])
-    )
-    dataset = ZooDataset(X, y)
+    X, y = get_bcc_data(True)
+    bcc_dataset = GenericUCIDataset(X, y)
 
     # Stratified K-Fold
     skf = StratifiedKFold(
@@ -227,25 +229,35 @@ def post_train_threshold(cfg: DictConfig) -> None:
         )
         assert pruned_pth.exists(), f"Model {model_dir.name} not pruned!"
 
-        model = construct_ndnf_based_model(eval_cfg)
-        assert isinstance(model, NeuralDNFEO)
-
-        model = model.to_ndnf()
+        model = BCCNeuralDNF(
+            num_features=bcc_dataset.X.shape[1],
+            invented_predicate_per_input=cfg["eval"]["model_architecture"][
+                "invented_predicate_per_input"
+            ],
+            num_conjunctions=cfg["eval"]["model_architecture"][
+                "n_conjunctions"
+            ],
+        )
         model.to(device)
-        model.eval()
         model_state = torch.load(
             pruned_pth, map_location=device, weights_only=True
         )
         model.load_state_dict(model_state)
 
         # Data loaders
-        train_loader, val_loader = get_zoo_dataloaders(
-            dataset=dataset,
-            train_index=train_index,
-            test_index=test_index,
+        train_loader = torch.utils.data.DataLoader(
+            bcc_dataset,
             batch_size=DEFAULT_LOADER_BATCH_SIZE,
-            loader_num_workers=DEFAULT_LOADER_NUM_WORKERS,
+            num_workers=DEFAULT_LOADER_NUM_WORKERS,
             pin_memory=device == torch.device("cuda"),
+            sampler=torch.utils.data.SubsetRandomSampler(train_index),  # type: ignore
+        )
+        val_loader = torch.utils.data.DataLoader(
+            bcc_dataset,
+            batch_size=DEFAULT_LOADER_BATCH_SIZE,
+            num_workers=DEFAULT_LOADER_NUM_WORKERS,
+            pin_memory=device == torch.device("cuda"),
+            sampler=torch.utils.data.SubsetRandomSampler(test_index),  # type: ignore
         )
 
         log.info(f"Experiment {model_dir.name} loaded!")

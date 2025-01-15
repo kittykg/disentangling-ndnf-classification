@@ -1,8 +1,8 @@
 """
-This script prunes the plain NDNF part of its corresponding NDNF-EO model. The
-input NDNF-EO models are strictly after training and without any post-training
-processing. The pruned NDNF model are stored and evaluated. The evaluation
-metrics include accuracy, sample Jaccard, and macro Jaccard.
+This script prunes the NDNF part of its BCC NeuralDNF model. The input models
+are strictly after training and without any post-training processing. The BCC
+NeuralDNF models with their NDNF models pruned are stored and evaluated. The
+evaluation metrics include accuracy, precision, recall, and F1 score.
 """
 
 from datetime import datetime
@@ -22,7 +22,6 @@ import torch
 from torch.utils.data import DataLoader
 
 from neural_dnf.post_training import prune_neural_dnf
-from neural_dnf import NeuralDNFEO, NeuralDNF
 
 file = Path(__file__).resolve()
 parent, root = file.parent.parent, file.parent.parents[1]
@@ -34,10 +33,12 @@ except ValueError:  # Already removed
     pass
 
 from analysis import synthesize
-from utils import construct_ndnf_based_model, post_to_discord_webhook
-from zoo.data_utils_zoo import *
-from zoo.eval.ndnf_eval_common import (
-    ndnf_based_model_eval,
+from data_utils import GenericUCIDataset
+from utils import post_to_discord_webhook
+
+from bcc.data_utils_bcc import get_bcc_data
+from bcc.eval.ndnf_eval_common import (
+    bcc_classifier_eval,
     parse_eval_return_meters_with_logging,
     DEFAULT_GEN_SEED,
     DEFAULT_LOADER_BATCH_SIZE,
@@ -45,66 +46,28 @@ from zoo.eval.ndnf_eval_common import (
     AFTER_TRAIN_MODEL_BASE_NAME,
     FIRST_PRUNE_MODEL_BASE_NAME,
 )
+from bcc.models import BCCNeuralDNF
 
 
 log = logging.getLogger()
 
 
 def multiround_prune(
-    model: NeuralDNF,
+    model: BCCNeuralDNF,
     device: torch.device,
     train_loader: DataLoader,
     eval_log_fn: Callable[[dict[str, Any]], dict[str, float]],
 ) -> int:
     def comparison_fn(og_parsed_eval_log, new_prased_eval_log):
-        # check accuracy, if it is less than the original, then no prune
-        if new_prased_eval_log["accuracy"] < og_parsed_eval_log["accuracy"]:
-            return False
-
-        # check sample jaccard, if it is less than the original, then no prune
-        if (
-            new_prased_eval_log["sample_jaccard"]
-            < og_parsed_eval_log["sample_jaccard"]
-        ):
-            return False
-
-        # check macro jaccard, if it is less than the original, then no prune
-        if (
-            new_prased_eval_log["macro_jaccard"]
-            < og_parsed_eval_log["macro_jaccard"]
-        ):
-            return False
-
-        # error dict
-        og_error_dict = og_parsed_eval_log["error_dict"]
-        new_error_dict = new_prased_eval_log["error_dict"]
-
-        # check overall error class count, if it is greater than the original,
-        # then no prune
-        if (
-            new_error_dict["overall_error_class_count"]
-            > og_error_dict["overall_error_class_count"]
-        ):
-            return False
-
-        for k in [
-            "missing_predictions",
-            "multiple_predictions",
-            "wrong_predictions",
-        ]:
-            # for each of the error, check if the set of classes in the new
-            # dict is a subset of the classes in the original dict
-            og_error_classes = set([int(c) for c in og_error_dict[k].keys()])
-            new_error_classes = set([int(c) for c in new_error_dict[k].keys()])
-            if not new_error_classes.issubset(og_error_classes):
+        for k in ["accuracy", "precision", "recall", "f1"]:
+            if new_prased_eval_log[k] < og_parsed_eval_log[k]:
                 return False
-
         return True
 
     prune_iteration = 1
 
     prune_eval_function = lambda: parse_eval_return_meters_with_logging(
-        eval_meters=ndnf_based_model_eval(model, device, train_loader),
+        eval_meters=bcc_classifier_eval(model, device, train_loader),
         model_name="Prune (intermediate)",
         do_logging=False,
     )
@@ -114,7 +77,7 @@ def multiround_prune(
         start_time = datetime.now()
 
         prune_result_dict = prune_neural_dnf(
-            model,
+            model.ndnf,
             prune_eval_function,
             {},
             comparison_fn,
@@ -162,20 +125,18 @@ def multiround_prune(
 
 def single_model_prune(
     fold_id: int,
-    model: NeuralDNF,
+    model: BCCNeuralDNF,
     device: torch.device,
     train_loader: DataLoader,
     val_loader: DataLoader,
     model_dir: Path,
 ) -> dict[str, float]:
     def _eval_with_log_wrapper(model_name: str) -> dict[str, float]:
-        eval_meters = ndnf_based_model_eval(model, device, val_loader)
-        return parse_eval_return_meters_with_logging(
-            eval_meters, model_name, check_error_meter=False
-        )
+        eval_meters = bcc_classifier_eval(model, device, val_loader)
+        return parse_eval_return_meters_with_logging(eval_meters, model_name)
 
     # Stage 1: Evaluate the model post-training
-    _eval_with_log_wrapper("Plain NDNF (after training)")
+    _eval_with_log_wrapper("BCC-NDNF (after training)")
     log.info("------------------------------------------")
 
     # Stage 2: Prune the model / load pruned checkpoint
@@ -229,10 +190,8 @@ def post_train_prune(cfg: DictConfig) -> None:
     log.info(f"Device: {device}")
 
     # Load data
-    X, y, feature_names = get_zoo_data_np_from_path(
-        data_dir_path=Path(cfg["dataset"]["save_dir"])
-    )
-    dataset = ZooDataset(X, y)
+    X, y = get_bcc_data(True)
+    bcc_dataset = GenericUCIDataset(X, y)
 
     # Stratified K-Fold
     skf = StratifiedKFold(
@@ -248,8 +207,15 @@ def post_train_prune(cfg: DictConfig) -> None:
         model_dir = (
             Path(eval_cfg["storage_dir"]) / run_dir_name / f"fold_{fold_id}"
         )
-        model = construct_ndnf_based_model(eval_cfg)
-        assert isinstance(model, NeuralDNFEO)
+        model = BCCNeuralDNF(
+            num_features=bcc_dataset.X.shape[1],
+            invented_predicate_per_input=cfg["eval"]["model_architecture"][
+                "invented_predicate_per_input"
+            ],
+            num_conjunctions=cfg["eval"]["model_architecture"][
+                "n_conjunctions"
+            ],
+        )
         model.to(device)
         model_state = torch.load(
             model_dir / f"{AFTER_TRAIN_MODEL_BASE_NAME}_fold_{fold_id}.pth",
@@ -257,29 +223,27 @@ def post_train_prune(cfg: DictConfig) -> None:
             weights_only=True,
         )
         model.load_state_dict(model_state)
+        model.eval()
 
         # Data loaders
-        train_loader, val_loader = get_zoo_dataloaders(
-            dataset=dataset,
-            train_index=train_index,
-            test_index=test_index,
+        train_loader = torch.utils.data.DataLoader(
+            bcc_dataset,
             batch_size=DEFAULT_LOADER_BATCH_SIZE,
-            loader_num_workers=DEFAULT_LOADER_NUM_WORKERS,
+            num_workers=DEFAULT_LOADER_NUM_WORKERS,
             pin_memory=device == torch.device("cuda"),
+            sampler=torch.utils.data.SubsetRandomSampler(train_index),  # type: ignore
         )
-
-        plain_model = model.to_ndnf()
-        plain_model.to(device)
-        plain_model.eval()
+        val_loader = torch.utils.data.DataLoader(
+            bcc_dataset,
+            batch_size=DEFAULT_LOADER_BATCH_SIZE,
+            num_workers=DEFAULT_LOADER_NUM_WORKERS,
+            pin_memory=device == torch.device("cuda"),
+            sampler=torch.utils.data.SubsetRandomSampler(test_index),  # type: ignore
+        )
 
         log.info(f"Experiment {model_dir.name} loaded!")
         prune_eval_log = single_model_prune(
-            fold_id,
-            plain_model,
-            device,
-            train_loader,
-            val_loader,
-            model_dir,
+            fold_id, model, device, train_loader, val_loader, model_dir
         )
         ret_dicts.append(prune_eval_log)
         with open(model_dir / f"fold_{fold_id}_mr_prune_result.json", "w") as f:

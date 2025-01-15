@@ -1,9 +1,9 @@
 """
-This script disentangle pruned plain NDNF. The input NDNF models are strictly
-after pruning stage in the post-training processing pipeline. The disentangled
-NDNF model are stored and evaluated, with the relevant information stored in a
-json. The evaluation metrics include accuracy, sample Jaccard, macro Jaccard,
-and error metrics.
+This script disentangle pruned NDNF in a BCC NeuralDNF model. The input model's
+NDNF models are strictly after pruning stage in the post-training processing
+pipeline. The BCC NeuralDNF models with their NDNF models disentangled are
+stored and evaluated, with the relevant information stored in a json. The
+evaluation metrics include accuracy, precision, recall, and F1 score.
 
 The difference between this script and the previous version is that instead of
 re-wiring all the new conjunctions to corresponding disjunctive nodes with
@@ -26,7 +26,7 @@ from sklearn.model_selection import StratifiedKFold
 import torch
 from torch.utils.data import DataLoader
 
-from neural_dnf import NeuralDNF, NeuralDNFEO
+from neural_dnf import NeuralDNF
 from neural_dnf.post_training import (
     split_entangled_conjunction,
     condense_neural_dnf_model,
@@ -41,11 +41,13 @@ try:
 except ValueError:  # Already removed
     pass
 
-from analysis import synthesize
-from utils import construct_ndnf_based_model, post_to_discord_webhook
-from zoo.data_utils_zoo import *
-from zoo.eval.ndnf_eval_common import (
-    ndnf_based_model_eval,
+from analysis import AccuracyMeter, synthesize
+from data_utils import GenericUCIDataset
+from utils import post_to_discord_webhook
+
+from bcc.data_utils_bcc import get_bcc_data
+from bcc.eval.ndnf_eval_common import (
+    bcc_classifier_eval,
     parse_eval_return_meters_with_logging,
     DEFAULT_GEN_SEED,
     DEFAULT_LOADER_BATCH_SIZE,
@@ -55,13 +57,14 @@ from zoo.eval.ndnf_eval_common import (
     DISENTANGLED_MODEL_BASE_NAME,
     DISENTANGLED_RESULT_JSON_BASE_NAME,
 )
-from zoo.eval.ndnf_eo_kfold_prune import multiround_prune
+from bcc.eval.ndnf_kfold_prune import multiround_prune
+from bcc.models import BCCNeuralDNF
 
 
 log = logging.getLogger()
 
 
-def create_intermediate_model(model: NeuralDNF) -> NeuralDNF:
+def create_intermediate_ndnf(model: NeuralDNF) -> NeuralDNF:
     # Remember the disjunction-conjunction mapping
     conj_w = model.conjunctions.weights.data.clone().detach().cpu()
     disj_w = model.disjunctions.weights.data.clone().detach().cpu()
@@ -128,13 +131,13 @@ def create_intermediate_model(model: NeuralDNF) -> NeuralDNF:
 
 
 def threshold_intermediate_model_disjunctive_layer(
-    intermediate_model: NeuralDNF,
+    intermediate_bcc_model: BCCNeuralDNF,
     device: torch.device,
     train_loader: DataLoader,
     do_logging: bool = False,
 ) -> float:
     intermediate_disj_weight = (
-        intermediate_model.disjunctions.weights.data.clone()
+        intermediate_bcc_model.ndnf.disjunctions.weights.data.clone()
     )
     threshold_upper_bound = round(
         (
@@ -155,37 +158,36 @@ def threshold_intermediate_model_disjunctive_layer(
     t_vals = torch.arange(0, threshold_upper_bound, 0.01)
     result_dicts_with_t_val = []
     for v in t_vals:
-        intermediate_model.disjunctions.weights.data = (
+        intermediate_bcc_model.ndnf.disjunctions.weights.data = (
             (torch.abs(intermediate_disj_weight) > v)
             * torch.sign(intermediate_disj_weight)
             * 6
         )
-        threshold_eval_dict = ndnf_based_model_eval(
-            intermediate_model, device, train_loader
+        threshold_eval_dict = bcc_classifier_eval(
+            intermediate_bcc_model, device, train_loader
         )
-        sample_jacc: float = threshold_eval_dict["jacc_meter"].get_average(
-            "samples"  # type: ignore
-        )
-        overall_error_rate: float = threshold_eval_dict[
-            "error_meter"  # type: ignore
-        ].get_average()["overall_error_rate"]
-        acc: float = threshold_eval_dict["acc_meter"].get_average()
+        acc_meter: AccuracyMeter = threshold_eval_dict["acc_meter"]  # type: ignore
+        accuracy = acc_meter.get_average()
+        other_metrics = acc_meter.get_other_classification_metrics()
+        precision = other_metrics["precision"]
+        recall = other_metrics["recall"]
+        f1 = other_metrics["f1"]
 
         result_dicts_with_t_val.append(
             {
                 "t_val": v.item(),
-                "sample_jacc": sample_jacc,
-                "overall_error_rate": overall_error_rate,
-                "acc": acc,
+                "accuracy": accuracy,
+                "precision": precision,
+                "recall": recall,
+                "f1": f1,
             }
         )
 
     sorted_result_dicts: list[dict[str, float]] = sorted(
         result_dicts_with_t_val,
         key=lambda x: (
-            x["sample_jacc"],
-            -x["overall_error_rate"],
-            x["acc"],
+            x["accuracy"],
+            x["f1"],
         ),
         reverse=True,
     )
@@ -196,15 +198,16 @@ def threshold_intermediate_model_disjunctive_layer(
             log.info(
                 f"-- Candidate {i + 1} --\n"
                 f"\tt_val: {d['t_val']:.2f}  "
-                f"Sample Jacc: {d['sample_jacc']:.3f}  "
-                f"Overall error rate: {d['overall_error_rate']:.3f}  "
-                f"Acc: {d['acc']:.3f}"
+                f"Acc: {d['accuracy']:.3f}  "
+                f"Precision: {d['precision']:.3f}  "
+                f"Recall: {d['recall']:.3f}  "
+                f"F1: {d['f1']:.3f}"
             )
 
     # Apply the best threshold
     best_t_val = sorted_result_dicts[0]["t_val"]
     log.info(f"Applying t_val: {best_t_val:.2f}")
-    intermediate_model.disjunctions.weights.data = (
+    intermediate_bcc_model.ndnf.disjunctions.weights.data = (
         (torch.abs(intermediate_disj_weight) > best_t_val)
         * torch.sign(intermediate_disj_weight)
         * 6
@@ -215,16 +218,16 @@ def threshold_intermediate_model_disjunctive_layer(
 
 def single_model_disentangle(
     fold_id: int,
-    model: NeuralDNF,
+    model: BCCNeuralDNF,
     device: torch.device,
     train_loader: DataLoader,
     val_loader: DataLoader,
     model_dir: Path,
 ) -> dict[str, Any]:
     def _eval_with_log_wrapper(
-        model: NeuralDNF, model_name: str
+        model: BCCNeuralDNF, model_name: str
     ) -> dict[str, Any]:
-        eval_meters = ndnf_based_model_eval(model, device, val_loader)
+        eval_meters = bcc_classifier_eval(model, device, val_loader)
         return parse_eval_return_meters_with_logging(eval_meters, model_name)
 
     # Stage 1: Evaluate the pruned model
@@ -232,57 +235,58 @@ def single_model_disentangle(
     log.info("------------------------------------------")
 
     # Stage 2: Disentangle the pruned model
-    def disentangle(model: NeuralDNF) -> dict[str, Any]:
+    def disentangle(model: BCCNeuralDNF) -> dict[str, Any]:
         log.info("Disentangling the model...")
 
         # Create an intermediate model
-        intermediate_model = create_intermediate_model(model)
-        intermediate_model.to(device)
-        intermediate_model.eval()
+        intermediate_ndnf = create_intermediate_ndnf(model.ndnf)
+        model.change_ndnf(intermediate_ndnf)
+        model.to(device)
+        model.eval()
         intermediate_pre_threshold_log = _eval_with_log_wrapper(
-            intermediate_model, "Disentangled intermediate NDNF model"
+            model, "BCC with intermediate disentangled NDNF model"
         )
         log.info("------------------------------------------")
 
         # Threshold the intermediate model's disjunctive layer
         best_t_val = threshold_intermediate_model_disjunctive_layer(
-            intermediate_model, device, train_loader, do_logging=True
+            model, device, train_loader, do_logging=True
         )
         intermediate_thresholed_log = _eval_with_log_wrapper(
-            intermediate_model,
-            f"Thresholded disentangled intermediate model (t={best_t_val})",
+            model,
+            f"BCC with thresholded disentangled NDNF (t={best_t_val})",
         )
         log.info("------------------------------------------")
 
         # Prune the intermediate disentangled model
         multiround_prune(
-            intermediate_model,
+            model,
             device,
             train_loader,
-            lambda x: _eval_with_log_wrapper(
-                intermediate_model, x["model_name"]
-            ),
+            lambda x: _eval_with_log_wrapper(model, x["model_name"]),
         )
         intermediate_pruned_log = _eval_with_log_wrapper(
-            intermediate_model, "Disentangled intermediate NDNF model (pruned)"
+            model, "BCC with pruned disentangled NDNF model"
         )
         log.info("------------------------------------------")
 
         # Condense the model
-        intermediate_model.to(torch.device("cpu"))
-        condensed_model = condense_neural_dnf_model(intermediate_model)
-        condensed_model.to(device)
-        condensed_model.eval()
+        model.to(torch.device("cpu"))
+        condensed_ndnf = condense_neural_dnf_model(model.ndnf)
+        model.change_ndnf(condensed_ndnf)
+        model.to(device)
+        model.eval()
         condensed_model_log = _eval_with_log_wrapper(
-            condensed_model, "Condensed disentangled NDNF model"
+            model, "Condensed disentangled NDNF model"
         )
 
         return {
             "intermediate_pre_threshold_log": intermediate_pre_threshold_log,
             "intermediate_thresholed_log": intermediate_thresholed_log,
             "intermediate_pruned_log": intermediate_pruned_log,
-            "intermediate_model": intermediate_model,
-            "condensed_model": condensed_model,
+            "intermediate_ndnf": intermediate_ndnf,
+            "condensed_ndnf": condensed_ndnf,
+            "condensed_model": model,
             "condensed_model_log": condensed_model_log,
         }
 
@@ -299,39 +303,41 @@ def single_model_disentangle(
         with open(disentangle_result_json, "r") as f:
             stats = json.load(f)
 
-        disentangled_model = NeuralDNF(
-            stats["disentangled_model_n_in"],
-            stats["disentangled_model_n_conjunctions"],
-            stats["disentangled_model_n_out"],
+        disentangled_ndnf = NeuralDNF(
+            stats["disentangled_ndnf_n_in"],
+            stats["disentangled_ndnf_n_conjunctions"],
+            stats["disentangled_ndnf_n_out"],
             1.0,
         )
-        disentangled_model.to(device)
+        model.change_ndnf(disentangled_ndnf)
+        model.to(device)
         disentangled_state = torch.load(
             model_path, map_location=device, weights_only=True
         )
-        disentangled_model.load_state_dict(disentangled_state)
-        disentangled_model.eval()
+        model.load_state_dict(disentangled_state)
+        model.eval()
         condensed_model_log = _eval_with_log_wrapper(
-            disentangled_model, "Condensed disentangled NDNF model"
+            model, "BCC with condensed disentangled NDNF model"
         )
     else:
         ret = disentangle(model)
-        disentangled_model: NeuralDNF = ret["condensed_model"]
-        intermediate_model: NeuralDNF = ret["intermediate_model"]
+        intermediate_ndnf: NeuralDNF = ret["intermediate_ndnf"]
+        disentangled_ndnf: NeuralDNF = ret["condensed_ndnf"]
+        disentangled_model: BCCNeuralDNF = ret["condensed_model"]
         condensed_model_log = ret["condensed_model_log"]
 
         torch.save(disentangled_model.state_dict(), model_path)
         torch.save(
-            intermediate_model.state_dict(),
+            intermediate_ndnf.state_dict(),
             model_dir
-            / f"{INTERMEDIATE_DISENTANGLED_MODEL_BASE_NAME}_v2_fold_{fold_id}.pth",
+            / f"{INTERMEDIATE_DISENTANGLED_MODEL_BASE_NAME}_v2_ndnf_fold_{fold_id}.pth",
         )
 
         disentanglement_result = {
-            "disentangled_model_n_in": disentangled_model.conjunctions.in_features,
-            "disentangled_model_n_conjunctions": disentangled_model.conjunctions.out_features,
-            "disentangled_model_n_out": disentangled_model.disjunctions.out_features,
-            "intermediate_model_n_conjunctions": intermediate_model.conjunctions.out_features,
+            "disentangled_ndnf_n_in": disentangled_ndnf.conjunctions.in_features,
+            "disentangled_ndnf_n_conjunctions": disentangled_ndnf.conjunctions.out_features,
+            "disentangled_ndnf_n_out": disentangled_ndnf.disjunctions.out_features,
+            "intermediate_ndnf_n_conjunctions": intermediate_ndnf.conjunctions.out_features,
             "intermediate_pre_threshold_log": ret[
                 "intermediate_pre_threshold_log"
             ],
@@ -373,10 +379,8 @@ def post_train_disentangle(cfg: DictConfig):
     log.info(f"Device: {device}")
 
     # Load data
-    X, y, feature_names = get_zoo_data_np_from_path(
-        data_dir_path=Path(cfg["dataset"]["save_dir"])
-    )
-    dataset = ZooDataset(X, y)
+    X, y = get_bcc_data(True)
+    bcc_dataset = GenericUCIDataset(X, y)
 
     # Stratified K-Fold
     skf = StratifiedKFold(
@@ -397,25 +401,36 @@ def post_train_disentangle(cfg: DictConfig):
         )
         assert pruned_pth.exists(), f"Model {model_dir.name} not pruned!"
 
-        model = construct_ndnf_based_model(eval_cfg)
-        assert isinstance(model, NeuralDNFEO)
-
-        model = model.to_ndnf()
+        model = BCCNeuralDNF(
+            num_features=bcc_dataset.X.shape[1],
+            invented_predicate_per_input=cfg["eval"]["model_architecture"][
+                "invented_predicate_per_input"
+            ],
+            num_conjunctions=cfg["eval"]["model_architecture"][
+                "n_conjunctions"
+            ],
+        )
         model.to(device)
-        model.eval()
         model_state = torch.load(
             pruned_pth, map_location=device, weights_only=True
         )
         model.load_state_dict(model_state)
+        model.eval()
 
         # Data loaders
-        train_loader, val_loader = get_zoo_dataloaders(
-            dataset=dataset,
-            train_index=train_index,
-            test_index=test_index,
+        train_loader = torch.utils.data.DataLoader(
+            bcc_dataset,
             batch_size=DEFAULT_LOADER_BATCH_SIZE,
-            loader_num_workers=DEFAULT_LOADER_NUM_WORKERS,
+            num_workers=DEFAULT_LOADER_NUM_WORKERS,
             pin_memory=device == torch.device("cuda"),
+            sampler=torch.utils.data.SubsetRandomSampler(train_index),  # type: ignore
+        )
+        val_loader = torch.utils.data.DataLoader(
+            bcc_dataset,
+            batch_size=DEFAULT_LOADER_BATCH_SIZE,
+            num_workers=DEFAULT_LOADER_NUM_WORKERS,
+            pin_memory=device == torch.device("cuda"),
+            sampler=torch.utils.data.SubsetRandomSampler(test_index),  # type: ignore
         )
 
         log.info(f"Experiment {model_dir.name} loaded!")

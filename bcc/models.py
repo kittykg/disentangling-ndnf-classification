@@ -94,3 +94,6 @@ class BCCNeuralDNF(BCCClassifier):
             ]
         )
         return torch.abs(p_t * (6 - torch.abs(p_t))).mean()
+
+    def change_ndnf(self, new_ndnf: NeuralDNF):
+        self.ndnf = new_ndnf
