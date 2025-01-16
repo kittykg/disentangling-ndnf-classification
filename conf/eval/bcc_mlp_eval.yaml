@@ -1,0 +1,11 @@
+experiment_name: bcc_mlp_std_l64x64_b8_e500
+
+use_cuda: True
+use_mps: False
+
+seed: 6000
+k_folds: 5
+
+model_type: mlp
+
+storage_dir: ??? # overwrite this

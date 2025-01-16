@@ -65,12 +65,16 @@ class BCCNeuralDNF(BCCClassifier):
             delta=1.0,
         )
 
-    def get_invented_predicates(self, x: Tensor) -> Tensor:
+    def get_invented_predicates(
+        self, x: Tensor, discretised: bool = False
+    ) -> Tensor:
         # x: B x P
         x = torch.tanh(x.unsqueeze(-1) - self.predicate_inventor)
         # x: B x P x Q, x \in (-1, 1)
         x = x.flatten(start_dim=1)
         # x: B x (P * Q)
+        if discretised:
+            x = torch.sign(x)
         return x
 
     def get_conjunction(self, x: Tensor) -> Tensor:
@@ -79,9 +83,11 @@ class BCCNeuralDNF(BCCClassifier):
         # x: B x (P * Q)
         return self.ndnf.get_conjunction(x)
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(
+        self, x: Tensor, discretise_invented_predicate: bool = False
+    ) -> Tensor:
         # x: B x P
-        x = self.get_invented_predicates(x)
+        x = self.get_invented_predicates(x, discretise_invented_predicate)
         # x: B x (P * Q)
         return self.ndnf(x)
 

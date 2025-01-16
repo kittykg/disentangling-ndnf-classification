@@ -38,6 +38,7 @@ def bcc_classifier_eval(
     model: BCCClassifier,
     device: torch.device,
     data_loader: DataLoader,
+    discretise_invented_predicates: bool = True,
     do_logging: bool = False,
 ) -> dict[str, Meter]:
     model.eval()
@@ -57,7 +58,10 @@ def bcc_classifier_eval(
             x = data[0].to(device)
             y = data[1].to(device)
 
-            y_hat = model(x).squeeze()
+            if isinstance(model, BCCNeuralDNF):
+                y_hat = model(x, discretise_invented_predicates).squeeze()
+            else:
+                y_hat = model(x).squeeze()
 
         if isinstance(model, BCCNeuralDNF):
             # For NeuralDNF, we need to take the tanh of the logit and

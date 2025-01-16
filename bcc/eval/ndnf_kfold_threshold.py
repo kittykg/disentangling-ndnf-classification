@@ -41,7 +41,7 @@ from utils import post_to_discord_webhook
 
 
 from bcc.data_utils_bcc import get_bcc_data
-from bcc.eval.ndnf_eval_common import (
+from bcc.eval.eval_common import (
     bcc_classifier_eval,
     parse_eval_return_meters_with_logging,
     DEFAULT_GEN_SEED,
@@ -317,7 +317,7 @@ def run_eval(cfg: DictConfig) -> None:
             webhook_url = cfg["webhook"]["discord_webhook_url"]
             post_to_discord_webhook(
                 webhook_url=webhook_url,
-                experiment_name=f"{cfg['eval']['experiment_name']} Multirun Threshold",
+                experiment_name=f"{cfg['eval']['experiment_name']} Kfold Threshold",
                 message_body=msg_body,
                 errored=errored,
                 keyboard_interrupt=keyboard_interrupt,

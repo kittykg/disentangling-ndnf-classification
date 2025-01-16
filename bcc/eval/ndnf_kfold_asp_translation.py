@@ -39,7 +39,7 @@ from analysis import Meter, AccuracyMeter, synthesize
 from utils import post_to_discord_webhook
 
 from bcc.data_utils_bcc import get_bcc_data
-from bcc.eval.ndnf_eval_common import (
+from bcc.eval.eval_common import (
     parse_eval_return_meters_with_logging,
     DEFAULT_GEN_SEED,
     THRESHOLD_MODEL_BASE_NAME,
@@ -137,7 +137,8 @@ def asp_eval(
     ground_truth = test_data[:, -1].tolist()
     with torch.no_grad():
         invented_predicates = model.get_invented_predicates(
-            torch.tensor(test_data[:, :-1], dtype=torch.float32)
+            torch.tensor(test_data[:, :-1], dtype=torch.float32),
+            discretised=True,
         )
 
     input_name = format_options.get("input_name", "a")
@@ -152,7 +153,7 @@ def asp_eval(
     for d in invented_predicates:
         asp_base = []
         for i, a in enumerate(d):
-            if a > 0:
+            if a == 1:
                 asp_base.append(
                     f"{input_name}_{i}."
                     if input_syntax == "PRED"
@@ -353,7 +354,7 @@ def run_eval(cfg: DictConfig) -> None:
             webhook_url = cfg["webhook"]["discord_webhook_url"]
             post_to_discord_webhook(
                 webhook_url=webhook_url,
-                experiment_name=f"{cfg['eval']['experiment_name']} Multirun Disentangle",
+                experiment_name=f"{cfg['eval']['experiment_name']} Kfold ASP Translation + Eval",
                 message_body=msg_body,
                 errored=errored,
                 keyboard_interrupt=keyboard_interrupt,

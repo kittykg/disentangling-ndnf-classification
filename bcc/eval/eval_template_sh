@@ -1,6 +1,16 @@
 export CUDA_VISIBLE_DEVICES=???
 BCC_FOLDER=???
 
+# BCC, MLP, After train
+# python bcc/eval/mlp_kfold_after_train_eval.py \
+#     +eval=bcc_mlp_eval \
+#     ++eval.storage_dir=$BCC_FOLDER \
+
+# BCC, NDNF, After train
+# python bcc/eval/ndnf_kfold_after_train_eval.py \
+#     +eval=bcc_ndnf_eval \
+#     ++eval.storage_dir=$BCC_FOLDER \
+
 # BCC, NDNF, Prune
 # python bcc/eval/ndnf_kfold_prune.py \
 #     +eval=bcc_ndnf_eval \
