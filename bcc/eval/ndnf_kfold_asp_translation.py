@@ -1,9 +1,10 @@
 """
 This script translates the NDNF in BCC NeuralDNF model with weights only in the
-set {±6, 0} to its logically-equivalent ASP program. The input models are
-strictly after pruning stage and a discretisation step (either
-thresholding/disentanglement) in the post-training processing pipeline. The ASP
-programs are stored and evaluated, with the relevant information stored in a
+set {±6, 0} to its logically-equivalent ASP program. It also translates the
+invented predicates into a readable format. The input model is strictly after
+pruning stage and a discretisation step (either thresholding/disentanglement) in
+the post-training processing pipeline. The ASP program and the predicate
+translation are stored and evaluated, with the relevant information stored in a
 json. The evaluation metrics include accuracy, precision, recall and F1 score.
 """
 
@@ -218,6 +219,44 @@ def asp_eval(
     return {"acc_meter": acc_meter}
 
 
+def translate_invented_predicate(
+    model: BCCNeuralDNF,
+    format_options: dict[str, str] = {},
+) -> list[str]:
+    num_invented_predicates_per_feature = model.predicate_inventor.shape[1]
+
+    input_name = format_options.get("input_name", "a")
+    input_syntax = format_options.get("input_syntax", "PRED")
+
+    relevant_input_id: list[int] = []
+    for conj_w in model.ndnf.conjunctions.weights.data:
+        for i, w in enumerate(conj_w):
+            if w != 0:
+                relevant_input_id.append(i)
+
+    with torch.no_grad():
+        threshold_values = model.predicate_inventor.data.flatten().cpu()
+
+    invented_predicate_string_repr = []
+    for i in sorted(relevant_input_id):
+        f = i // num_invented_predicates_per_feature
+        p = i % num_invented_predicates_per_feature
+        invented_predicate_name = (
+            f"{input_name}_{i}"
+            if input_syntax == "PRED"
+            else f"{input_name}({i})"
+        )
+        log.info(
+            f"Invented Predicate {invented_predicate_name} at ({f}, {p}): "
+            f"feature_{f} > {threshold_values[i]}"
+        )
+        invented_predicate_string_repr.append(
+            f"{invented_predicate_name} = feature_{f} > {threshold_values[i]}"
+        )
+
+    return invented_predicate_string_repr
+
+
 def single_model_translate(
     cfg: DictConfig,
     test_data: np.ndarray,
@@ -256,6 +295,7 @@ def single_model_translate(
         eval_meters=asp_eval(test_data, model),
         model_name="ASP Translation",
     )
+
     with open(translation_json_path, "w") as f:
         json.dump(
             {
@@ -267,6 +307,11 @@ def single_model_translate(
                         )
                     ),  # type: ignore
                     **asp_eval_log,
+                    **{
+                        "invented_predicates": translate_invented_predicate(
+                            model
+                        )
+                    },
                 }.items()
             },
             f,
