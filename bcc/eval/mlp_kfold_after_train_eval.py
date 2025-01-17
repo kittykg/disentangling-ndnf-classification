@@ -71,7 +71,7 @@ def post_train_prune(cfg: DictConfig) -> None:
     log.info(f"Device: {device}")
 
     # Load data
-    X, y = get_bcc_data(True)
+    X, y, _ = get_bcc_data(eval_cfg["standardise"])
     bcc_dataset = GenericUCIDataset(X, y)
 
     # Stratified K-Fold

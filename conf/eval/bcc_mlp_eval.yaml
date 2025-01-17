@@ -5,6 +5,7 @@ use_mps: False
 
 seed: 6000
 k_folds: 5
+standardise: True
 
 model_type: mlp
 

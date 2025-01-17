@@ -357,7 +357,7 @@ def train(cfg: DictConfig, run_dir: Path) -> dict[str, float]:
     log.info(f"Device: {device}")
 
     # Get data
-    X, y = get_bcc_data(standardise=training_cfg["standardise"])
+    X, y, _ = get_bcc_data(standardise=training_cfg["standardise"])
     bcc_dataset = GenericUCIDataset(X, y)
 
     # Fold results

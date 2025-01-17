@@ -22,6 +22,7 @@ import hydra
 import numpy as np
 from omegaconf import DictConfig
 from sklearn.model_selection import StratifiedKFold
+from sklearn.preprocessing import StandardScaler
 import torch
 
 from neural_dnf import NeuralDNF
@@ -221,8 +222,9 @@ def asp_eval(
 
 def translate_invented_predicate(
     model: BCCNeuralDNF,
+    scaler: StandardScaler | None,
     format_options: dict[str, str] = {},
-) -> list[str]:
+) -> dict[str, list[str]]:
     num_invented_predicates_per_feature = model.predicate_inventor.shape[1]
 
     input_name = format_options.get("input_name", "a")
@@ -237,7 +239,9 @@ def translate_invented_predicate(
     with torch.no_grad():
         threshold_values = model.predicate_inventor.data.flatten().cpu()
 
-    invented_predicate_string_repr = []
+    invented_predicate_string_unscaled_repr: list[str] = []
+    invented_predicate_string_scaled_repr: list[str] = []
+
     for i in sorted(relevant_input_id):
         f = i // num_invented_predicates_per_feature
         p = i % num_invented_predicates_per_feature
@@ -246,19 +250,44 @@ def translate_invented_predicate(
             if input_syntax == "PRED"
             else f"{input_name}({i})"
         )
-        log.info(
-            f"Invented Predicate {invented_predicate_name} at ({f}, {p}): "
-            f"feature_{f} > {threshold_values[i]}"
+
+        t_scaled = None
+        if scaler is None:
+            t_unscaled = threshold_values[i]
+        else:
+            assert (
+                scaler.mean_ is not None and scaler.var_ is not None
+            ), "Scaler not fitted."
+            t_scaled = threshold_values[i]
+            t_unscaled = t_scaled * scaler.var_[f] + scaler.mean_[f]
+
+        log_info_str = (
+            f"Invented Predicate {invented_predicate_name} at ({f}, {p}):\n"
+            f"\tfeature_{f} > {t_unscaled}"
         )
-        invented_predicate_string_repr.append(
-            f"{invented_predicate_name} = feature_{f} > {threshold_values[i]}"
+        invented_predicate_string_unscaled_repr.append(
+            f"{invented_predicate_name} = feature_{f} > {t_unscaled}"
         )
 
-    return invented_predicate_string_repr
+        if t_scaled is not None:
+            invented_predicate_string_scaled_repr.append(
+                f"{invented_predicate_name} = feature_{f} > {t_scaled}"
+            )
+            log_info_str += (
+                f"\n\tfeature_{f} > {threshold_values[i]} (value scaled)"
+            )
+
+        log.info(log_info_str)
+
+    return {
+        "invented_predicates_unscaled": invented_predicate_string_unscaled_repr,
+        "invented_predicates_scaled": invented_predicate_string_scaled_repr,
+    }
 
 
 def single_model_translate(
     cfg: DictConfig,
+    scaler: StandardScaler | None,
     test_data: np.ndarray,
     fold_id: int,
     run_dir_name: str,
@@ -307,11 +336,7 @@ def single_model_translate(
                         )
                     ),  # type: ignore
                     **asp_eval_log,
-                    **{
-                        "invented_predicates": translate_invented_predicate(
-                            model
-                        )
-                    },
+                    **translate_invented_predicate(model, scaler),
                 }.items()
             },
             f,
@@ -332,7 +357,7 @@ def post_train_asp_translate(cfg: DictConfig):
     )
 
     # Load data
-    X, y = get_bcc_data(True)
+    X, y, scaler = get_bcc_data(eval_cfg["standardise"])
 
     # Stratified K-Fold
     skf = StratifiedKFold(
@@ -347,7 +372,7 @@ def post_train_asp_translate(cfg: DictConfig):
         test_data_with_label = np.column_stack((X[test_index], y[test_index]))
         ret_dicts.append(
             single_model_translate(
-                cfg, test_data_with_label, fold_id, run_dir_name
+                cfg, scaler, test_data_with_label, fold_id, run_dir_name
             )
         )
         log.info("============================================================")

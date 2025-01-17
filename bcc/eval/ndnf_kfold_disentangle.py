@@ -258,7 +258,7 @@ def post_train_disentangle(cfg: DictConfig):
     log.info(f"Device: {device}")
 
     # Load data
-    X, y = get_bcc_data(True)
+    X, y, _ = get_bcc_data(eval_cfg["standardise"])
     bcc_dataset = GenericUCIDataset(X, y)
 
     # Stratified K-Fold
