@@ -49,14 +49,13 @@ class BCCNeuralDNF(BCCClassifier):
         num_features: int,
         invented_predicate_per_input: int,
         num_conjunctions: int,
-        uniform_init_boundary: float = 5,
     ):
         super().__init__()
 
         self.predicate_inventor = nn.Parameter(
             torch.empty(num_features, invented_predicate_per_input)
         )  # P x Q
-        nn.init.uniform_(self.predicate_inventor, a=0, b=uniform_init_boundary)
+        nn.init.normal_(self.predicate_inventor)
 
         self.ndnf = NeuralDNF(
             n_in=num_features * invented_predicate_per_input,

@@ -32,4 +32,4 @@ dds:
 aux_loss:
   weight_l1_mod_lambda: 1e-3
   tanh_conj_lambda: 1e-1
-  pi_lambda: 1e-3
+  pi_lambda: 5e-1
