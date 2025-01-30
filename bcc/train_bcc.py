@@ -413,7 +413,7 @@ def train(cfg: DictConfig, run_dir: Path) -> dict[str, float]:
 @hydra.main(version_base=None, config_path="../conf", config_name="config")
 def run_experiment(cfg: DictConfig) -> None:
     # We expect the experiment name to be in the format of:
-    # cub_{no. classes}_ndnf_{eo/plain}_...
+    # bcc_{mlp/ndnf}_...
     experiment_name = cfg["training"]["experiment_name"]
 
     seed = cfg["training"]["seed"]

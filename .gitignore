@@ -163,6 +163,7 @@ cython_debug/
 outputs/
 notebooks/
 model_storage/
+wandb/sweep*
 
 # scripts
 scripts/*.sh

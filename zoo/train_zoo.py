@@ -7,7 +7,6 @@ import traceback
 
 import hydra
 from hydra.core.hydra_config import HydraConfig
-
 import numpy as np
 from omegaconf import DictConfig, OmegaConf
 from sklearn.model_selection import StratifiedKFold
@@ -372,7 +371,7 @@ def train(cfg: DictConfig, run_dir: Path) -> dict[str, float]:
 @hydra.main(version_base=None, config_path="../conf", config_name="config")
 def run_experiment(cfg: DictConfig) -> None:
     # We expect the experiment name to be in the format of:
-    # cub_{no. classes}_ndnf_{eo/plain}_...
+    # zoo_ndnf_{(eo)}_...
     experiment_name = cfg["training"]["experiment_name"]
 
     seed = cfg["training"]["seed"]
