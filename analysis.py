@@ -7,6 +7,7 @@ from sklearn.metrics import (
     jaccard_score,
     precision_score,
     recall_score,
+    matthews_corrcoef,
 )
 import numpy as np
 import torch
@@ -113,25 +114,17 @@ class AccuracyMeter(Meter):
         return {"accuracy": self.get_average()}
 
     def get_other_classification_metrics(self) -> dict[str, float]:
-        # TODO: https://github.com/scikit-learn/scikit-learn/issues/29107
-        # There is some bug with scikit-learn with device checking, the
-        # following code will not work. Waiting for 1.6.1 bug fix release
-        # return {
-        #     "precision": float(
-        #         precision_score(self.targets.int(), self.outputs.int())
-        #     ),
-        #     "recall": float(
-        #         recall_score(self.targets.int(), self.outputs.int())
-        #     ),
-        #     "f1": float(f1_score(self.targets.int(), self.outputs.int())),
-        # }
-        t_np = self.targets.int().numpy()
-        o_np = self.outputs.int().numpy()
-
         return {
-            "precision": float(precision_score(t_np, o_np)),
-            "recall": float(recall_score(t_np, o_np)),
-            "f1": float(f1_score(t_np, o_np)),
+            "precision": float(
+                precision_score(self.targets.int(), self.outputs.int())
+            ),
+            "recall": float(
+                recall_score(self.targets.int(), self.outputs.int())
+            ),
+            "f1": float(f1_score(self.targets.int(), self.outputs.int())),
+            "mcc": float(
+                matthews_corrcoef(self.targets.int(), self.outputs.int())
+            ),
         }
 
 

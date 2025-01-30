@@ -1,0 +1,23 @@
+experiment_name: mushroom_mlp_l64_b128_e100
+seed: null
+
+use_cuda: True
+use_mps: False
+
+log_interval: 20
+
+val_size: 0.15
+
+model_type: mlp
+
+optimiser: adam
+optimiser_lr: 0.001
+optimiser_weight_decay: 0.00004
+scheduler_step: 10
+loss_func: bce_logit
+batch_size: 128
+loader_num_workers: 0
+epochs: 100
+
+aux_loss:
+  weight_l1_mod_lambda: 1e-3
