@@ -1,4 +1,4 @@
-experiment_name: mushroom_ndnf_nc128_b256_e500
+experiment_name: mushroom_ndnf_nc32_b64_e500
 seed: null
 
 use_cuda: True
@@ -10,23 +10,23 @@ val_size: 0.15
 
 model_type: ndnf
 model_architecture:
-  n_conjunctions: 128
+  n_conjunctions: 32
 
 optimiser: adam
 optimiser_lr: 0.001
-optimiser_weight_decay: 0.00004
-scheduler_step: 10
+optimiser_weight_decay: 0.0001
+scheduler_step: 113
 loss_func: bce
-batch_size: 256
+batch_size: 64
 loader_num_workers: 0
 epochs: 500
 
 dds:
   initial_delta: 0.1
-  delta_decay_delay: 20
-  delta_decay_steps: 5
+  delta_decay_delay: 5
+  delta_decay_steps: 6
   delta_decay_rate: 1.1
 
 aux_loss:
-  weight_l1_mod_lambda: 1e-3
-  tanh_conj_lambda: 1e-1
+  weight_l1_mod_lambda: 1e-7
+  tanh_conj_lambda: 1e-12

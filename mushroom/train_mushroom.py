@@ -363,6 +363,10 @@ def train(cfg: DictConfig, run_dir: Path) -> dict[str, float]:
 
     _train(training_cfg, model, train_loader, val_loader, device, use_wandb)
 
+    if isinstance(model, MushroomNeuralDNF):
+        # Set delta to 1.0 for evaluation
+        model.ndnf.set_delta_val(1.0)
+
     model_path = run_dir / "model.pth"
     torch.save(model.state_dict(), model_path)
 
