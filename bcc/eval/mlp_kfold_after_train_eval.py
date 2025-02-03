@@ -16,7 +16,6 @@ import numpy as np
 from omegaconf import DictConfig
 from sklearn.model_selection import StratifiedKFold
 import torch
-from torch.utils.data import DataLoader
 
 file = Path(__file__).resolve()
 parent, root = file.parent.parent, file.parent.parents[1]
@@ -46,7 +45,7 @@ from bcc.models import BCCMLP
 log = logging.getLogger()
 
 
-def post_train_prune(cfg: DictConfig) -> None:
+def post_train_eval(cfg: DictConfig) -> None:
     eval_cfg = cfg["eval"]
     full_experiment_name = f"{eval_cfg['experiment_name']}_{eval_cfg['seed']}"
     run_dir_name = "-".join(
@@ -147,7 +146,7 @@ def run_eval(cfg: DictConfig) -> None:
     keyboard_interrupt = None
 
     try:
-        post_train_prune(cfg)
+        post_train_eval(cfg)
         if use_discord_webhook:
             msg_body = "Success!"
     except BaseException as e:
