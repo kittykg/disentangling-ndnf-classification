@@ -1,0 +1,60 @@
+export CUDA_VISIBLE_DEVICES=???
+MUSHROOM_FOLDER=???
+
+# Mushroom, MLP, After train
+# python mushroom/eval/mushroom_multirun_after_train_eval.py \
+#     dataset=mushroom \
+#     +eval=mushroom_mlp_multirun_eval \
+#     ++eval.storage_dir=$MUSHROOM_FOLDER
+
+# Mushroom, NDNF, After train
+# python mushroom/eval/mushroom_multirun_after_train_eval.py \
+#     dataset=mushroom \
+#     +eval=mushroom_ndnf_multirun_eval \
+#     ++eval.storage_dir=$MUSHROOM_FOLDER
+
+# Mushroom, NDNF, Prune
+# python mushroom/eval/ndnf_multirun_prune.py \
+#     dataset=mushroom \
+#     +eval=mushroom_ndnf_multirun_eval \
+#     ++eval.storage_dir=$MUSHROOM_FOLDER
+
+# Mushroom, NDNF, Threshold
+# python mushroom/eval/ndnf_multirun_threshold.py \
+#     dataset=mushroom \
+#     +eval=mushroom_ndnf_multirun_eval \
+#     ++eval.storage_dir=$MUSHROOM_FOLDER
+
+# Mushroom, NDNF, Disentanglement, v1
+# python mushroom/eval/ndnf_multirun_disentangle.py \
+#     dataset=mushroom \
+#     +eval=mushroom_ndnf_multirun_eval \
+#     ++eval.storage_dir=$MUSHROOM_FOLDER
+
+# Mushroom, NDNF, Disentanglement, v2
+# python mushroom/eval/ndnf_multirun_disentangle_v2.py \
+#     dataset=mushroom \
+#     +eval=mushroom_ndnf_multirun_eval \
+#     ++eval.storage_dir=$MUSHROOM_FOLDER
+
+# Mushroom, NDNF, ASP Translation, Threshold
+# python mushroom/eval/ndnf_multirun_asp_translation.py \
+#     dataset=mushroom \
+#     +eval=mushroom_ndnf_multirun_eval \
+#     ++eval.discretisation_method=threshold \
+#     ++eval.storage_dir=$MUSHROOM_FOLDER
+
+# Mushroom, NDNF, ASP Translation, Disentanglement, v1
+# python mushroom/eval/ndnf_multirun_asp_translation.py \
+#     dataset=mushroom \
+#     +eval=mushroom_ndnf_multirun_eval \
+#     ++eval.discretisation_method=disentangle \
+#     ++eval.storage_dir=$MUSHROOM_FOLDER
+
+# Mushroom, NDNF, ASP Translation, Disentanglement, v2
+# python mushroom/eval/ndnf_multirun_asp_translation.py \
+#     dataset=mushroom \
+#     +eval=mushroom_ndnf_multirun_eval \
+#     ++eval.discretisation_method=disentangle \
+#     ++eval.cd_version=2 \
+#     ++eval.storage_dir=$MUSHROOM_FOLDER

@@ -1,18 +1,17 @@
 """
-This script prunes the MushroomNDNF model. The input models are strictly after
-training and without any post-training processing. The pruned NDNF models are
-stored and evaluated. The evaluation metrics include accuracy, precision,
-recall, F1 score and MCC.
+This script thresholds pruned MushroomNeuralDNF model. The input NDNF models are
+strictly after pruning stage in the post-training processing pipeline. The
+thresholded MushroomNeuralDNF models are stored and evaluated. The evaluation
+metrics include accuracy, precision, recall, F1 score and MCC.
 """
 
-from datetime import datetime
 import json
 import logging
 from pathlib import Path
 import random
 import sys
 import traceback
-from typing import Any, Callable
+from typing import Any
 
 import hydra
 import numpy as np
@@ -21,7 +20,10 @@ from sklearn.model_selection import train_test_split
 import torch
 from torch.utils.data import DataLoader
 
-from neural_dnf.post_training import prune_neural_dnf
+from neural_dnf.post_training import (
+    get_thresholding_upper_bound,
+    apply_threshold,
+)
 
 file = Path(__file__).resolve()
 parent, root = file.parent.parent, file.parent.parents[1]
@@ -32,7 +34,7 @@ try:
 except ValueError:  # Already removed
     pass
 
-from analysis import synthesize
+from analysis import AccuracyMeter, synthesize
 from utils import post_to_discord_webhook
 
 from mushroom.data_utils_mushroom import (
@@ -47,131 +49,149 @@ from mushroom.eval.eval_common import (
     DEFAULT_LOADER_NUM_WORKERS,
     AFTER_TRAIN_MODEL_BASE_NAME,
     FIRST_PRUNE_MODEL_BASE_NAME,
+    THRESHOLD_MODEL_BASE_NAME,
+    THRESHOLD_RESULT_JSON_BASE_NAME,
 )
+from mushroom.eval.ndnf_multirun_prune import multiround_prune
 from mushroom.models import MushroomNeuralDNF, construct_model
 
 
 log = logging.getLogger()
 
 
-def multiround_prune(
-    model: MushroomNeuralDNF,
-    device: torch.device,
-    train_loader: DataLoader,
-    eval_log_fn: Callable[[dict[str, Any]], dict[str, float]],
-) -> int:
-    def comparison_fn(og_parsed_eval_log, new_prased_eval_log):
-        for k in ["accuracy", "precision", "recall", "f1", "mcc"]:
-            if new_prased_eval_log[k] < og_parsed_eval_log[k]:
-                return False
-        return True
-
-    prune_iteration = 1
-
-    prune_eval_function = lambda: parse_eval_return_meters_with_logging(
-        eval_meters=mushroom_classifier_eval(model, device, train_loader),
-        model_name="Prune (intermediate)",
-        do_logging=False,
-    )
-
-    while True:
-        log.info(f"Pruning iteration: {prune_iteration }")
-        start_time = datetime.now()
-
-        prune_result_dict = prune_neural_dnf(
-            model.ndnf,
-            prune_eval_function,
-            {},
-            comparison_fn,
-            options={
-                "skip_prune_disj_with_empty_conj": True,
-                "skip_last_prune_disj": True,
-            },
-        )
-
-        important_keys = [
-            "disj_prune_count_1",
-            "unused_conjunctions_2",
-            "conj_prune_count_3",
-            # "prune_disj_with_empty_conj_count_4",
-        ]
-
-        end_time = datetime.now()
-        log.info(f"\tTime taken: {end_time - start_time}")
-        log.info(
-            f"\tPruned disjunction count: {prune_result_dict['disj_prune_count_1']}"
-        )
-        log.info(
-            f"\tRemoved unused conjunction count: {prune_result_dict['unused_conjunctions_2']}"
-        )
-        log.info(
-            f"\tPruned conjunction count: {prune_result_dict['conj_prune_count_3']}"
-        )
-        # log.info(
-        #     f"\tPruned disj with empty conj: {prune_result_dict['prune_disj_with_empty_conj_count_4']}"
-        # )
-
-        eval_log_fn(
-            {"model_name": f"Plain NDNF - (Prune iteration: {prune_iteration})"}
-        )
-        log.info("..................................")
-        # If any of the important keys has the value not 0, then we should
-        # continue pruning
-        if any([prune_result_dict[k] != 0 for k in important_keys]):
-            prune_iteration += 1
-        else:
-            break
-
-    return prune_iteration
-
-
-def single_model_prune(
+def single_model_threshold(
     model: MushroomNeuralDNF,
     device: torch.device,
     train_loader: DataLoader,
     val_loader: DataLoader,
     test_loader: DataLoader,
     model_dir: Path,
-) -> dict[str, float]:
+) -> dict[str, Any]:
     def _eval_with_log_wrapper(
         model_name: str, data_loader: DataLoader = val_loader
-    ) -> dict[str, float]:
+    ) -> dict[str, Any]:
         eval_meters = mushroom_classifier_eval(model, device, data_loader)
         return parse_eval_return_meters_with_logging(eval_meters, model_name)
 
-    # Stage 1: Evaluate the model post-training
-    _eval_with_log_wrapper("Mushroom NDNF (after training, test)", test_loader)
+    # Stage 1: Evaluate the pruned model
+    prune_log = _eval_with_log_wrapper(
+        "Pruned Mushroom NDNF model (test)", test_loader
+    )
     log.info("------------------------------------------")
 
-    # Stage 2: Prune the model / load pruned checkpoint
-    # First check for checkpoints. If the model is already pruned, then we load
-    # the pruned model Otherwise, we prune the model and save the pruned model
-    model_path = model_dir / f"{FIRST_PRUNE_MODEL_BASE_NAME}.pth"
-    if model_path.exists():
-        log.info("Loading the pruned model...")
-        pruned_state = torch.load(
-            model_path, map_location=device, weights_only=True
+    # Stage 2: Threshold + after threshold prune
+    def threshold(do_logging: bool = False) -> dict[str, Any]:
+        log.info("Thresholding the model...")
+
+        og_conj_weight = model.ndnf.conjunctions.weights.data.clone()
+        og_disj_weight = model.ndnf.disjunctions.weights.data.clone()
+
+        threshold_upper_bound = get_thresholding_upper_bound(model.ndnf)
+        log.info(f"Threshold upper bound: {threshold_upper_bound}")
+
+        t_vals = torch.arange(0, threshold_upper_bound, 0.01)
+        result_dicts_with_t_val = []
+        for v in t_vals:
+            apply_threshold(model.ndnf, og_conj_weight, og_disj_weight, v)
+            threshold_eval_dict = mushroom_classifier_eval(
+                model, device, train_loader
+            )
+            acc_meter: AccuracyMeter = threshold_eval_dict["acc_meter"]  # type: ignore
+            accuracy = acc_meter.get_average()
+            other_metrics = acc_meter.get_other_classification_metrics()
+            precision = other_metrics["precision"]
+            recall = other_metrics["recall"]
+            f1 = other_metrics["f1"]
+            mcc = other_metrics["mcc"]
+
+            result_dicts_with_t_val.append(
+                {
+                    "t_val": v.item(),
+                    "accuracy": accuracy,
+                    "precision": precision,
+                    "recall": recall,
+                    "f1": f1,
+                    "mcc": mcc,
+                }
+            )
+
+        sorted_result_dicts: list[dict[str, float]] = sorted(
+            result_dicts_with_t_val,
+            key=lambda x: (
+                x["mcc"],
+                x["recall"],  # maximise recall to minimise false negatives
+            ),
+            reverse=True,
         )
-        model.load_state_dict(pruned_state)
-    else:
-        log.info("Pruning the model...")
+
+        if do_logging:
+            log.info("Top 5 thresholding candidates:")
+            for i, d in enumerate(sorted_result_dicts[:5]):
+                log.info(
+                    f"-- Candidate {i + 1} --\n"
+                    f"\tt_val: {d['t_val']:.2f}  "
+                    f"Acc: {d['accuracy']:.3f}  "
+                    f"Precision: {d['precision']:.3f}  "
+                    f"Recall: {d['recall']:.3f}  "
+                    f"F1: {d['f1']:.3f}  "
+                    f"MCC: {d['mcc']:.3f}"
+                )
+
+        # Apply the best threshold
+        best_t_val = sorted_result_dicts[0]["t_val"]
+        apply_threshold(model.ndnf, og_conj_weight, og_disj_weight, best_t_val)
+        intermediate_log = _eval_with_log_wrapper(
+            f"Thresholded model (t={best_t_val})"
+        )
+        log.info("------------------------------------------")
+
+        # Prune the model after thresholding
         multiround_prune(
             model,
             device,
             train_loader,
             lambda x: _eval_with_log_wrapper(x["model_name"]),
         )
-        torch.save(model.state_dict(), model_path)
+        threshold_final_log = _eval_with_log_wrapper(
+            f"Thresholded NDNF model (t={best_t_val}) after final prune (test)",
+            test_loader,
+        )
 
-    prune_eval_log = _eval_with_log_wrapper(
-        "Mushroom NDNF pruned (test)", test_loader
+        return {
+            "threshold_val": best_t_val,
+            "intermediate_log": intermediate_log,
+            "threshold_final_log": threshold_final_log,
+        }
+
+    # Check for checkpoints
+    # If the model is already thresholded, then we load the thresholded model
+    # Otherwise, we threshold the model and save
+    model_path = model_dir / f"{THRESHOLD_MODEL_BASE_NAME}.pth"
+    threshold_result_json = (
+        model_dir / f"{THRESHOLD_RESULT_JSON_BASE_NAME}.json"
     )
+    if model_path.exists() and threshold_result_json.exists():
+        threshold_state = torch.load(
+            model_path, map_location=device, weights_only=True
+        )
+        model.load_state_dict(threshold_state)
+        threshold_eval_log = _eval_with_log_wrapper("Thresholded NDNF model")
+    else:
+        threshold_ret_dict = threshold(do_logging=True)
+        torch.save(model.state_dict(), model_path)
+        with open(threshold_result_json, "w") as f:
+            json.dump(
+                {"prune_log": prune_log, **threshold_ret_dict},
+                f,
+                indent=4,
+            )
+        threshold_eval_log = threshold_ret_dict["threshold_final_log"]
     log.info("============================================================")
 
-    return prune_eval_log
+    return threshold_eval_log
 
 
-def multirun_prune(cfg: DictConfig) -> None:
+def multirun_threshold(cfg: DictConfig) -> None:
     eval_cfg = cfg["eval"]
 
     # Set up device
@@ -221,7 +241,7 @@ def multirun_prune(cfg: DictConfig) -> None:
         assert isinstance(model, MushroomNeuralDNF)
         model.to(device)
         model_state = torch.load(
-            model_dir / f"{AFTER_TRAIN_MODEL_BASE_NAME}.pth",
+            model_dir / f"{FIRST_PRUNE_MODEL_BASE_NAME}.pth",
             map_location=device,
             weights_only=True,
         )
@@ -252,17 +272,17 @@ def multirun_prune(cfg: DictConfig) -> None:
         )
 
         log.info(f"Experiment {model_dir.name} loaded!")
-        prune_eval_log = single_model_prune(
-            model, device, train_loader, val_loader, test_loader, model_dir
+        ret_dicts.append(
+            single_model_threshold(
+                model, device, train_loader, val_loader, test_loader, model_dir
+            )
         )
-        ret_dicts.append(prune_eval_log)
-
-        with open(model_dir / f"model_mr_prune_result.json", "w") as f:
-            json.dump(prune_eval_log, f, indent=4)
         log.info("============================================================")
 
     # Synthesize the results
-    relevant_keys = list(ret_dicts[0].keys())
+    relevant_keys = [
+        k for k, v in ret_dicts[0].items() if isinstance(v, (int, float))
+    ]
     return_dict = {}
     for k in relevant_keys:
         synth_dict = synthesize(np.array([d[k] for d in ret_dicts]))
@@ -273,7 +293,7 @@ def multirun_prune(cfg: DictConfig) -> None:
     for k, v in return_dict.items():
         log.info(f"{k}: {v:.3f}")
 
-    with open("multirun_prune_result.json", "w") as f:
+    with open("threshold_result.json", "w") as f:
         json.dump(return_dict, f, indent=4)
 
 
@@ -292,7 +312,7 @@ def run_eval(cfg: DictConfig) -> None:
     keyboard_interrupt = None
 
     try:
-        multirun_prune(cfg)
+        multirun_threshold(cfg)
         if use_discord_webhook:
             msg_body = "Success!"
     except BaseException as e:
@@ -311,7 +331,7 @@ def run_eval(cfg: DictConfig) -> None:
             webhook_url = cfg["webhook"]["discord_webhook_url"]
             post_to_discord_webhook(
                 webhook_url=webhook_url,
-                experiment_name=f"{cfg['eval']['experiment_name']} Multirun Prune",
+                experiment_name=f"{cfg['eval']['experiment_name']} Multirun Threshold",
                 message_body=msg_body,
                 errored=errored,
                 keyboard_interrupt=keyboard_interrupt,
