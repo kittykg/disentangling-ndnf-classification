@@ -33,7 +33,12 @@ from mushroom.data_utils_mushroom import (
     get_mushroom_data_np_from_path,
     get_x_and_y_mushroom,
 )
-from mushroom.models import MushroomClassifier, MushroomMLP, MushroomNeuralDNF
+from mushroom.models import (
+    MushroomClassifier,
+    MushroomMLP,
+    MushroomNeuralDNF,
+    construct_model,
+)
 from mushroom.eval.eval_common import (
     mushroom_classifier_eval,
     parse_eval_return_meters_with_logging,
@@ -350,15 +355,7 @@ def train(cfg: DictConfig, run_dir: Path) -> dict[str, float]:
     )
 
     # Model
-    if training_cfg["model_type"] == "ndnf":
-        model = MushroomNeuralDNF(
-            num_features=X_train.shape[1],
-            num_conjunctions=training_cfg["model_architecture"][
-                "n_conjunctions"
-            ],
-        )
-    else:
-        model = MushroomMLP(num_features=X_train.shape[1])
+    model = construct_model(training_cfg, X_train.shape[1])
     model.to(device)
 
     _train(training_cfg, model, train_loader, val_loader, device, use_wandb)

@@ -16,12 +16,8 @@ except ValueError:  # Already removed
     pass
 
 from analysis import Meter, AccuracyMeter
-from mushroom.data_utils_mushroom import (
-    MushroomDataset,
-    get_mushroom_data_np_from_path,
-    get_x_and_y_mushroom,
-)
-from mushroom.models import MushroomClassifier, MushroomMLP, MushroomNeuralDNF
+from mushroom.data_utils_mushroom import get_x_and_y_mushroom
+from mushroom.models import MushroomClassifier, MushroomNeuralDNF
 
 
 log = logging.getLogger()

@@ -1,3 +1,4 @@
+from omegaconf import DictConfig
 import torch
 import torch.nn as nn
 from torch import Tensor
@@ -72,3 +73,13 @@ class MushroomNeuralDNF(MushroomClassifier):
 
     def change_ndnf(self, new_ndnf: NeuralDNF):
         self.ndnf = new_ndnf
+
+
+def construct_model(cfg: DictConfig, num_features: int) -> MushroomClassifier:
+    if cfg["model_type"] == "ndnf":
+        return MushroomNeuralDNF(
+            num_features=num_features,
+            num_conjunctions=cfg["model_architecture"]["n_conjunctions"],
+        )
+
+    return MushroomMLP(num_features=num_features)

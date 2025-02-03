@@ -164,10 +164,10 @@ outputs/
 notebooks/
 model_storage/
 wandb/sweep*
+seeds.txt
 
 # scripts
-scripts/*.sh
-scripts/*.py
+scripts/
 *.sh
 
 # config
