@@ -1,0 +1,9 @@
+experiment_name: mushroom_mlp_l64_b128_e100
+multirun_seeds: [125, 182, 1754, 3427, 4297, 4417, 4518, 6810, 6818, 6858, 7542, 8064, 8318, 8392, 8529, 9086]
+
+use_cuda: True
+use_mps: False
+
+model_type: mlp
+
+storage_dir: ??? # overwrite this

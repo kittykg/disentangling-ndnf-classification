@@ -1,0 +1,14 @@
+experiment_name: mushroom_ndnf_nc32_b64_e500
+multirun_seeds: [445, 961, 1143, 2227, 2598, 3080, 3113, 3233, 3296, 3864, 5077, 6648, 7635, 8714, 8930, 9395]
+
+use_cuda: True
+use_mps: False
+
+val_size: 0.15
+
+model_type: ndnf
+model_architecture:
+  n_conjunctions: 32
+
+discretisation_method: threshold # 'threshold' or 'disentangle'
+storage_dir: ??? # overwrite this

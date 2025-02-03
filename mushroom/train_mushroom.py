@@ -12,6 +12,7 @@ from omegaconf import DictConfig, OmegaConf
 from sklearn.model_selection import train_test_split
 import torch
 from torch import Tensor, nn
+from torch.utils.data import DataLoader
 import wandb
 
 from neural_dnf.utils import DeltaDelayedExponentialDecayScheduler
@@ -70,8 +71,8 @@ def loss_calculation(
 def _train(
     training_cfg: DictConfig,
     model: MushroomClassifier,
-    train_loader: torch.utils.data.DataLoader,
-    val_loader: torch.utils.data.DataLoader,
+    train_loader: DataLoader,
+    val_loader: DataLoader,
     device: torch.device,
     use_wandb: bool,
 ) -> dict[str, float]:
@@ -334,20 +335,20 @@ def train(cfg: DictConfig, run_dir: Path) -> dict[str, float]:
     test_dataset = MushroomDataset(hold_out_test_X, hold_out_test_y)
 
     # Data loaders
-    train_loader = torch.utils.data.DataLoader(
+    train_loader = DataLoader(
         train_dataset,
         batch_size=training_cfg["batch_size"],
         num_workers=training_cfg.get("loader_num_workers", 0),
         pin_memory=device == torch.device("cuda"),
         shuffle=True,
     )
-    val_loader = torch.utils.data.DataLoader(
+    val_loader = DataLoader(
         val_dataset,
         batch_size=training_cfg["batch_size"],
         num_workers=training_cfg.get("loader_num_workers", 0),
         pin_memory=device == torch.device("cuda"),
     )
-    test_loader = torch.utils.data.DataLoader(
+    test_loader = DataLoader(
         test_dataset,
         batch_size=training_cfg["batch_size"],
         num_workers=training_cfg.get("loader_num_workers", 0),
