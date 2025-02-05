@@ -90,15 +90,12 @@ def mushroom_classifier_eval(
     if do_logging:
         acc = acc_meter.get_average()
         other_metrics = acc_meter.get_other_classification_metrics()
-        precision = other_metrics["precision"]
-        recall = other_metrics["recall"]
-        f1 = other_metrics["f1"]
 
         log.info(
             f"Overall Test -- Acc: {acc:.3f} -- "
-            f"Precision: {precision:.3f} -- "
-            f"Recall: {recall:.3f} -- "
-            f"F1: {f1:.3f} -- "
+            f"Precision: {other_metrics['precision']:.3f} -- "
+            f"Recall: {other_metrics['recall']:.3f} -- "
+            f"F1: {other_metrics['f1']:.3f} -- "
             f"MCC: {other_metrics['mcc']:.3f}"
         )
 

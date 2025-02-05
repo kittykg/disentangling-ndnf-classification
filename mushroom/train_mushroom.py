@@ -102,7 +102,7 @@ def _train(
     else:
         criterion = nn.MSELoss()
 
-    # Delta delay scheduler if using BCCNeuralDNF
+    # Delta delay scheduler if using NeuralDNF
     if isinstance(model, MushroomNeuralDNF):
         dds = DeltaDelayedExponentialDecayScheduler(
             initial_delta=training_cfg["dds"]["initial_delta"],
@@ -111,7 +111,7 @@ def _train(
             delta_decay_rate=training_cfg["dds"]["delta_decay_rate"],
             target_module_type=model.ndnf.__class__.__name__,
         )
-        model.ndnf.set_delta_val(0.1)
+        model.ndnf.set_delta_val(training_cfg["dds"]["initial_delta"])
         delta_one_counter = 0
 
     # Other training settings
@@ -208,7 +208,7 @@ def _train(
             if isinstance(model, MushroomNeuralDNF):
                 log_info_str = (
                     f"  [{epoch + 1:3d}] Train  Delta: {old_delta:.3f}  "
-                    f"avg loss: {avg_loss:.3f}  avg perf: {avg_acc:.3f}"
+                    f"avg loss: {avg_loss:.3f}  avg acc: {avg_acc:.3f}"
                 )
             else:
                 log_info_str = (
@@ -274,23 +274,23 @@ def _train(
         # -------------------------------------------------------------------- #
         if use_wandb:
             wandb_log_dict = {
-                f"epoch": epoch,
-                f"train/loss": avg_loss,
-                f"train/accuracy": avg_acc,
-                f"val/loss": val_avg_loss,
-                f"val/accuracy": val_avg_acc,
+                "train/epoch": epoch,
+                "train/loss": avg_loss,
+                "train/accuracy": avg_acc,
+                "val/loss": val_avg_loss,
+                "val/accuracy": val_avg_acc,
             }
             if isinstance(model, MushroomNeuralDNF):
-                wandb_log_dict[f"train/delta"] = old_delta
+                wandb_log_dict["train/delta"] = old_delta
             for key, meter in train_loss_meters.items():
                 if key == "overall_loss":
                     continue
                 wandb_log_dict[f"train/{key}"] = meter.get_average()
-            if gen_weight_hist:
+            if gen_weight_hist and isinstance(model, MushroomNeuralDNF):
                 # Generate weight histogram
                 f1, f2 = generate_weight_histogram(model.ndnf)
-                wandb_log_dict[f"conj_w_hist"] = wandb.Image(f1)
-                wandb_log_dict[f"disj_w_hist"] = wandb.Image(f2)
+                wandb_log_dict["conj_w_hist"] = wandb.Image(f1)
+                wandb_log_dict["disj_w_hist"] = wandb.Image(f2)
             wandb.log(wandb_log_dict)
 
     return {
