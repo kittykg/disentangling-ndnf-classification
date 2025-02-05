@@ -1,0 +1,11 @@
+experiment_name: car_mlp_l64_b64_e300
+multirun_seeds: [574, 1745, 1812, 1827, 1871, 1882, 3291, 4939, 7189, 7336, 7422, 8104, 8107, 9210, 9384, 9862]
+
+use_cuda: True
+use_mps: False
+
+model_type: mlp
+model_architecture:
+  num_latent: 64
+
+storage_dir: ??? # overwrite this
