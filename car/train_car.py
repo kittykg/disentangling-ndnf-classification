@@ -376,12 +376,23 @@ def train(cfg: DictConfig, run_dir: Path) -> dict[str, float]:
     test_dataset = CarDataset(hold_out_test_X, hold_out_test_y)
 
     # Data loaders
+    if training_cfg.get("use_weighted_sampler", False):
+        # Compute class counts
+        class_counts = np.bincount(y_train)
+        class_weights = 1 / class_counts
+        sampler = torch.utils.data.WeightedRandomSampler(
+            class_weights[y_train], len(y_train), replacement=True  # type: ignore
+        )
+    else:
+        sampler = None
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=training_cfg["batch_size"],
         num_workers=training_cfg.get("loader_num_workers", 0),
         pin_memory=device == torch.device("cuda"),
-        shuffle=True,
+        sampler=sampler,
+        shuffle=True if sampler is None else False,
     )
     val_loader = DataLoader(
         val_dataset,
