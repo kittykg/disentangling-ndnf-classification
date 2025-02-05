@@ -164,6 +164,10 @@ class JaccardScoreMeter(Meter):
 
 
 class ErrorMeter(Meter):
+    """
+    This meter is used to track the errors in a multi-class classification task.
+    """
+
     targets: list[int]
     missing_predictions: dict[int, list[int]]
     multiple_predictions: dict[int, list[int]]
@@ -177,24 +181,29 @@ class ErrorMeter(Meter):
         self.wrong_predictions = {}
 
     def update(self, output: Tensor, target: Tensor) -> None:
+        """
+        Accumulate the output and target. The output should be a binary tensor
+        with 1s in the predicted classes (N x C). The target should be a
+        multi-class tensor of correct class indices (shape N).
+        """
         target_list = target.detach().cpu().numpy().tolist()
         initial_len = len(self.targets)
 
         for i, target_class in enumerate(target_list):
             sample_id = initial_len + i
-            tanh_prediction = torch.where(output[i].cpu() > 0)[0]
+            prediction = torch.where(output[i].cpu() > 0)[0]
 
-            if len(tanh_prediction) == 0:
+            if len(prediction) == 0:
                 if target_class not in self.missing_predictions:
                     self.missing_predictions[target_class] = []
                 self.missing_predictions[target_class].append(sample_id)
-            elif len(tanh_prediction) > 1:
+            elif len(prediction) > 1:
                 if target_class not in self.multiple_predictions:
                     self.multiple_predictions[target_class] = []
                 self.multiple_predictions[target_class].append(sample_id)
             else:
-                tanh_prediction = tanh_prediction.item()
-                if tanh_prediction != target_class:
+                prediction = prediction.item()
+                if prediction != target_class:
                     if target_class not in self.wrong_predictions:
                         self.wrong_predictions[target_class] = []
                     self.wrong_predictions[target_class].append(sample_id)
@@ -211,8 +220,8 @@ class ErrorMeter(Meter):
         class_counts = Counter(self.targets)
         num_samples = len(self.targets)
 
-        overall_error_count = 0
-        overall_error_class_count = 0
+        overall_errored_sample_set = set()
+        overall_error_class_set = set()
 
         for dict_name, d in zip(
             ["missing", "multiple", "wrong"],
@@ -233,6 +242,7 @@ class ErrorMeter(Meter):
                 error_rates[errored_class] = (
                     error_count / class_counts[errored_class]
                 )
+                overall_errored_sample_set.update(samples)
 
             return_dict[f"{dict_name}_class_error_count_dict"] = error_counts
             return_dict[f"{dict_name}_class_error_rate_dict"] = error_rates
@@ -242,12 +252,13 @@ class ErrorMeter(Meter):
                 type_overall_error_count
             )
 
-            overall_error_count += type_overall_error_count
-            overall_error_class_count += len(d)
+            overall_error_class_set.update(d.keys())
 
-        return_dict["overall_error_count"] = overall_error_count
-        return_dict["overall_error_rate"] = overall_error_count / num_samples
-        return_dict["overall_error_class_count"] = overall_error_class_count
+        return_dict["overall_error_count"] = len(overall_errored_sample_set)
+        return_dict["overall_error_rate"] = (
+            len(overall_errored_sample_set) / num_samples
+        )
+        return_dict["overall_error_class_count"] = len(overall_error_class_set)
 
         return return_dict
 
