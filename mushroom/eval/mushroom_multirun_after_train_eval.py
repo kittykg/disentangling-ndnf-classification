@@ -107,7 +107,7 @@ def multirun_after_train_eval(cfg: DictConfig) -> None:
 
         eval_log = parse_eval_return_meters_with_logging(
             mushroom_classifier_eval(model, device, test_loader),
-            f"BCC-{'MLP' if isinstance(model, MushroomMLP) else 'NDNF'}",
+            f"Mushroom-{'MLP' if isinstance(model, MushroomMLP) else 'NDNF'}",
             do_logging=True,
         )
         single_eval_results.append(eval_log)
@@ -168,7 +168,7 @@ def run_eval(cfg: DictConfig) -> None:
             webhook_url = cfg["webhook"]["discord_webhook_url"]
             post_to_discord_webhook(
                 webhook_url=webhook_url,
-                experiment_name=f"{cfg['eval']['experiment_name']} Kfold After Train Eval",
+                experiment_name=f"{cfg['eval']['experiment_name']} Multirun After Train Eval",
                 message_body=msg_body,
                 errored=errored,
                 keyboard_interrupt=keyboard_interrupt,
