@@ -225,7 +225,9 @@ def translate_invented_predicate(
     scaler: StandardScaler | None,
     format_options: dict[str, str] = {},
 ) -> dict[str, list[str]]:
-    num_invented_predicates_per_feature = model.predicate_inventor.shape[1]
+    num_invented_predicates_per_feature = (
+        model.predicate_inventor.predicate_inventor.shape[1]
+    )
 
     input_name = format_options.get("input_name", "a")
     input_syntax = format_options.get("input_syntax", "PRED")
@@ -237,7 +239,9 @@ def translate_invented_predicate(
                 relevant_input_id.append(i)
 
     with torch.no_grad():
-        threshold_values = model.predicate_inventor.data.flatten().cpu()
+        threshold_values = (
+            model.predicate_inventor.predicate_inventor.data.flatten().cpu()
+        )
 
     invented_predicate_string_unscaled_repr: list[str] = []
     invented_predicate_string_scaled_repr: list[str] = []

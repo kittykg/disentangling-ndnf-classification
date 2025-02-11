@@ -1,9 +1,9 @@
-experiment_name: bcc_ndnf_std_ip4_nc32_b8_e500
+experiment_name: bcc_ndnf_std_pit_ip4_nc32_b8_e500
 
 use_cuda: True
 use_mps: False
 
-seed: 4996
+seed: 6212
 k_folds: 5
 standardise: True
 

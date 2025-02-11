@@ -1,8 +1,22 @@
+from pathlib import Path
+import sys
+
 import torch
 import torch.nn as nn
 from torch import Tensor
 
 from neural_dnf import NeuralDNF
+
+file = Path(__file__).resolve()
+parent, root = file.parent, file.parents[1]
+sys.path.append(str(root))
+# Additionally remove the current file's directory from sys.path
+try:
+    sys.path.remove(str(parent))
+except ValueError:  # Already removed
+    pass
+
+from predicate_invention import NeuralDNFPredicateInventor
 
 
 class BCCClassifier(nn.Module):
@@ -44,18 +58,23 @@ class BCCMLP(BCCClassifier):
 
 
 class BCCNeuralDNF(BCCClassifier):
+    predicate_inventor: NeuralDNFPredicateInventor
+    ndnf: NeuralDNF
+
     def __init__(
         self,
         num_features: int,
         invented_predicate_per_input: int,
         num_conjunctions: int,
+        predicate_inventor_tau: float = 1.0,
     ):
         super().__init__()
 
-        self.predicate_inventor = nn.Parameter(
-            torch.empty(num_features, invented_predicate_per_input)
-        )  # P x Q
-        nn.init.normal_(self.predicate_inventor)
+        self.predicate_inventor = NeuralDNFPredicateInventor(
+            num_features=num_features,
+            invented_predicate_per_input=invented_predicate_per_input,
+            tau=predicate_inventor_tau,
+        )
 
         self.ndnf = NeuralDNF(
             n_in=num_features * invented_predicate_per_input,
@@ -67,18 +86,11 @@ class BCCNeuralDNF(BCCClassifier):
     def get_invented_predicates(
         self, x: Tensor, discretised: bool = False
     ) -> Tensor:
-        # x: B x P
-        x = torch.tanh(x.unsqueeze(-1) - self.predicate_inventor)
-        # x: B x P x Q, x \in (-1, 1)
-        x = x.flatten(start_dim=1)
-        # x: B x (P * Q)
-        if discretised:
-            x = torch.sign(x)
-        return x
+        return self.predicate_inventor(x, discretised)
 
     def get_conjunction(self, x: Tensor) -> Tensor:
         # x: B x P
-        x = self.get_invented_predicates(x)
+        x = self.predicate_inventor(x)
         # x: B x (P * Q)
         return self.ndnf.get_conjunction(x)
 
@@ -86,7 +98,7 @@ class BCCNeuralDNF(BCCClassifier):
         self, x: Tensor, discretise_invented_predicate: bool = False
     ) -> Tensor:
         # x: B x P
-        x = self.get_invented_predicates(x, discretise_invented_predicate)
+        x = self.predicate_inventor(x, discretise_invented_predicate)
         # x: B x (P * Q)
         return self.ndnf(x)
 

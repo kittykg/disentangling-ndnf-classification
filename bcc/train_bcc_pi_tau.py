@@ -1,3 +1,8 @@
+"""
+This script is identical to train_bcc.py, except that it is for BCCNeuralDNF
+classifier and enables tau update for the predicate inventor.
+"""
+
 import json
 import logging
 from pathlib import Path
@@ -28,10 +33,11 @@ except ValueError:  # Already removed
 
 from analysis import MetricValueMeter, AccuracyMeter, collate, synthesize
 from data_utils import GenericUCIDataset
+from predicate_invention import DelayedExpontentialTauDecayScheduler
 from utils import post_to_discord_webhook, generate_weight_histogram
 
 from bcc.data_utils_bcc import get_bcc_data
-from bcc.models import BCCClassifier, BCCMLP, BCCNeuralDNF
+from bcc.models import BCCNeuralDNF
 
 
 log = logging.getLogger()
@@ -41,26 +47,16 @@ def loss_calculation(
     criterion: torch.nn.Module,
     y_hat: Tensor,
     y: Tensor,
-    model: BCCClassifier,
-    conj_out: Tensor | None = None,
-    invented_predicates: Tensor | None = None,
+    model: BCCNeuralDNF,
+    conj_out: Tensor,
+    invented_predicates: Tensor,
 ) -> dict[str, Tensor]:
-    loss_dict = {
+    return {
         "base_loss": criterion(y_hat, y),
         "weight_reg_loss": model.get_weight_reg_loss(),
+        "conj_reg_loss": (1 - conj_out.abs()).mean(),
+        "invented_predicates_reg_loss": (1 - invented_predicates.abs()).mean(),
     }
-
-    if conj_out is not None:
-        # Conjunction regularisation loss (push to ±1)
-        loss_dict["conj_reg_loss"] = (1 - conj_out.abs()).mean()
-
-    if invented_predicates is not None:
-        # Invented predicate regularisation loss (push to ±1)
-        loss_dict["invented_predicates_reg_loss"] = (
-            1 - invented_predicates.abs()
-        ).mean()
-
-    return loss_dict
 
 
 def train_fold(
@@ -71,21 +67,21 @@ def train_fold(
     training_cfg: DictConfig,
     device: torch.device,
     use_wandb: bool,
-) -> tuple[BCCClassifier, dict[str, float]]:
+) -> tuple[BCCNeuralDNF, dict[str, float]]:
 
     # Model
-    if training_cfg["model_type"] == "ndnf":
-        model = BCCNeuralDNF(
-            num_features=bcc_dataset.X.shape[1],
-            invented_predicate_per_input=training_cfg["model_architecture"][
-                "invented_predicate_per_input"
-            ],
-            num_conjunctions=training_cfg["model_architecture"][
-                "n_conjunctions"
-            ],
-        )
-    else:
-        model = BCCMLP(num_features=bcc_dataset.X.shape[1])
+    assert (
+        training_cfg["model_type"] == "ndnf"
+    ), "This training script only supports NDNF"
+
+    model = BCCNeuralDNF(
+        num_features=bcc_dataset.X.shape[1],
+        invented_predicate_per_input=training_cfg["model_architecture"][
+            "invented_predicate_per_input"
+        ],
+        num_conjunctions=training_cfg["model_architecture"]["n_conjunctions"],
+        predicate_inventor_tau=training_cfg["pi_tau"]["initial_tau"],
+    )
     model.to(device)
 
     # Data loaders
@@ -122,34 +118,33 @@ def train_fold(
     )
 
     # Loss function
-    loss_func_key = training_cfg["loss_func"]
-    # MLP -> BCEWithLogitsLoss, NDNF -> BCELoss / MSELoss
-    if isinstance(model, BCCMLP):
-        criterion = nn.BCEWithLogitsLoss()
-    elif loss_func_key == "bce":
-        criterion = nn.BCELoss()
-    else:
-        criterion = nn.MSELoss()
+    criterion = (
+        nn.BCELoss() if training_cfg["loss_func"] == "bce" else nn.MSELoss()
+    )
 
-    # Delta delay scheduler if using BCCNeuralDNF
-    if isinstance(model, BCCNeuralDNF):
-        dds = DeltaDelayedExponentialDecayScheduler(
-            initial_delta=training_cfg["dds"]["initial_delta"],
-            delta_decay_delay=training_cfg["dds"]["delta_decay_delay"],
-            delta_decay_steps=training_cfg["dds"]["delta_decay_steps"],
-            delta_decay_rate=training_cfg["dds"]["delta_decay_rate"],
-            target_module_type=model.ndnf.__class__.__name__,
-        )
-        model.ndnf.set_delta_val(0.1)
-        delta_one_counter = 0
+    # Delta scheduler and tau scheduler
+    dds = DeltaDelayedExponentialDecayScheduler(
+        initial_delta=training_cfg["dds"]["initial_delta"],
+        delta_decay_delay=training_cfg["dds"]["delta_decay_delay"],
+        delta_decay_steps=training_cfg["dds"]["delta_decay_steps"],
+        delta_decay_rate=training_cfg["dds"]["delta_decay_rate"],
+        target_module_type=model.ndnf.__class__.__name__,
+    )
+    model.ndnf.set_delta_val(0.1)
+    delta_one_counter = 0
+
+    tau_scheduler = DelayedExpontentialTauDecayScheduler(
+        initial_tau=training_cfg["pi_tau"]["initial_tau"],
+        tau_decay_delay=training_cfg["pi_tau"]["tau_decay_delay"],
+        tau_decay_steps=training_cfg["pi_tau"]["tau_decay_steps"],
+        tau_decay_rate=training_cfg["pi_tau"]["tau_decay_rate"],
+        min_tau=training_cfg["pi_tau"]["min_tau"],
+    )
 
     # Other training settings
     gen_weight_hist = training_cfg.get("gen_weight_hist", False)
     log_interval = training_cfg.get("log_interval", 100)
-    if isinstance(model, BCCNeuralDNF):
-        acc_meter_conversion_fn = lambda y_hat: y_hat > 0.5
-    else:
-        acc_meter_conversion_fn = lambda y_hat: torch.sigmoid(y_hat) > 0.5
+    acc_meter_conversion_fn = lambda y_hat: y_hat > 0.5
 
     for epoch in range(training_cfg["epochs"]):
         # -------------------------------------------------------------------- #
@@ -159,14 +154,11 @@ def train_fold(
             "overall_loss": MetricValueMeter("overall_loss_meter"),
             "base_loss": MetricValueMeter("base_loss_meter"),
             "weight_reg_loss": MetricValueMeter("weight_reg_loss_meter"),
+            "conj_reg_loss": MetricValueMeter("conj_reg_loss_meter"),
+            "invented_predicates_reg_loss": MetricValueMeter(
+                "invented_predicates_reg_loss_meter"
+            ),
         }
-        if isinstance(model, BCCNeuralDNF):
-            train_loss_meters["conj_reg_loss"] = MetricValueMeter(
-                "conj_reg_loss_meter"
-            )
-            train_loss_meters["invented_predicates_reg_loss"] = (
-                MetricValueMeter("invented_predicates_reg_loss_meter")
-            )
         train_acc_meter = AccuracyMeter(acc_meter_conversion_fn)
 
         model.train()
@@ -178,13 +170,11 @@ def train_fold(
             y = data[1].to(device)  # y \in {0, 1}
 
             y_hat = model(x).squeeze()
-            conj_out, invented_predicates = None, None
-            if isinstance(model, BCCNeuralDNF):
-                # For NeuralDNF, we need to take the tanh of the logit and
-                # then scale it to (0, 1)
-                y_hat = (torch.tanh(y_hat) + 1) / 2
-                conj_out = model.get_conjunction(x)
-                invented_predicates = model.get_invented_predicates(x)
+            # For NeuralDNF, we need to take the tanh of the logit and
+            # then scale it to (0, 1)
+            y_hat = (torch.tanh(y_hat) + 1) / 2
+            conj_out = model.get_conjunction(x)
+            invented_predicates = model.get_invented_predicates(x)
 
             loss_dict = loss_calculation(
                 criterion, y_hat, y, model, conj_out, invented_predicates
@@ -194,14 +184,11 @@ def train_fold(
                 loss_dict["base_loss"]
                 + training_cfg["aux_loss"]["weight_l1_mod_lambda"]
                 * loss_dict["weight_reg_loss"]
+                + training_cfg["aux_loss"]["tanh_conj_lambda"]
+                * loss_dict["conj_reg_loss"]
+                + training_cfg["aux_loss"]["pi_lambda"]
+                * loss_dict["invented_predicates_reg_loss"]
             )
-            if isinstance(model, BCCNeuralDNF):
-                loss += (
-                    training_cfg["aux_loss"]["tanh_conj_lambda"]
-                    * loss_dict["conj_reg_loss"]
-                    + training_cfg["aux_loss"]["pi_lambda"]
-                    * loss_dict["invented_predicates_reg_loss"]
-                )
 
             loss.backward()
             optimiser.step()
@@ -212,39 +199,35 @@ def train_fold(
             train_loss_meters["overall_loss"].update(loss.item())
             train_acc_meter.update(y_hat, y)
 
-        if isinstance(model, BCCNeuralDNF):
-            # Update delta value
-            delta_dict = dds.step(model.ndnf)
-            new_delta = delta_dict["new_delta_vals"][0]
-            old_delta = delta_dict["old_delta_vals"][0]
+        # Update delta value
+        delta_dict = dds.step(model.ndnf)
+        new_delta = delta_dict["new_delta_vals"][0]
+        old_delta = delta_dict["old_delta_vals"][0]
 
-            if new_delta == 1.0:
-                # The first time where new_delta_val becomes 1, the network isn't
-                # train with delta being 1 for that epoch. So delta_one_counter
-                # starts with -1, and when new_delta_val is first time being 1,
-                # the delta_one_counter becomes 0.
-                # We do not use the delta_one_counter for now, but it can be used
-                # to customise when to add auxiliary loss
-                delta_one_counter += 1
+        # Update tau value
+        tau_dict = tau_scheduler.step(model.predicate_inventor)
+        new_tau = tau_dict["new_tau"]
+        old_tau = tau_dict["old_tau"]
+
+        if new_delta == 1.0:
+            # The first time where new_delta_val becomes 1, the network isn't
+            # train with delta being 1 for that epoch. So delta_one_counter
+            # starts with -1, and when new_delta_val is first time being 1,
+            # the delta_one_counter becomes 0.
+            # We do not use the delta_one_counter for now, but it can be used
+            # to customise when to add auxiliary loss
+            delta_one_counter += 1
 
         # Log average performance for train
         avg_loss = train_loss_meters["overall_loss"].get_average()
         avg_acc = train_acc_meter.get_average()
 
         if epoch % log_interval == 0:
-            if isinstance(model, BCCNeuralDNF):
-                log_info_str = (
-                    f"  Fold [{fold_id:2d}] [{epoch + 1:3d}] Train  "
-                    f"Delta: {old_delta:.3f}  avg loss: {avg_loss:.3f}  "
-                    f"avg perf: {avg_acc:.3f}"
-                )
-            else:
-                log_info_str = (
-                    f"  Fold [{fold_id:2d}] [{epoch + 1:3d}] "
-                    f"Train                avg loss: {avg_loss:.3f}  "
-                    f"avg acc: {avg_acc:.3f}"
-                )
-            log.info(log_info_str)
+            log.info(
+                f"  Fold [{fold_id:2d}] [{epoch + 1:3d}] Train  "
+                f"Delta: {old_delta:.3f}  Tau:{old_tau:.3f}  "
+                f"avg loss: {avg_loss:.3f}  avg acc: {avg_acc:.3f}"
+            )
 
         # -------------------------------------------------------------------- #
         # 2. Evaluate performance on val
@@ -263,11 +246,9 @@ def train_fold(
                 y = data[1].to(device)
 
                 y_hat = model(x).squeeze()
-                conj_out, invented_predicates = None, None
-                if isinstance(model, BCCNeuralDNF):
-                    y_hat = (torch.tanh(y_hat) + 1) / 2
-                    conj_out = model.get_conjunction(x)
-                    invented_predicates = model.get_invented_predicates(x)
+                y_hat = (torch.tanh(y_hat) + 1) / 2
+                conj_out = model.get_conjunction(x)
+                invented_predicates = model.get_invented_predicates(x)
 
                 loss_dict = loss_calculation(
                     criterion, y_hat, y, model, conj_out, invented_predicates
@@ -277,14 +258,11 @@ def train_fold(
                     loss_dict["base_loss"]
                     + training_cfg["aux_loss"]["weight_l1_mod_lambda"]
                     * loss_dict["weight_reg_loss"]
+                    + training_cfg["aux_loss"]["tanh_conj_lambda"]
+                    * loss_dict["conj_reg_loss"]
+                    + training_cfg["aux_loss"]["pi_lambda"]
+                    * loss_dict["invented_predicates_reg_loss"]
                 )
-                if isinstance(model, BCCNeuralDNF):
-                    loss += (
-                        training_cfg["aux_loss"]["tanh_conj_lambda"]
-                        * loss_dict["conj_reg_loss"]
-                        + training_cfg["aux_loss"]["pi_lambda"]
-                        * loss_dict["invented_predicates_reg_loss"]
-                    )
 
                 # Update meters
                 epoch_val_loss_meter.update(loss.item())
@@ -312,11 +290,12 @@ def train_fold(
                 f"fold_{fold_id}/epoch": epoch,
                 f"fold_{fold_id}/train/loss": avg_loss,
                 f"fold_{fold_id}/train/accuracy": avg_acc,
+                f"fold_{fold_id}/train/delta": old_delta,
+                f"fold_{fold_id}/train/tau": old_tau,
                 f"fold_{fold_id}/val/loss": val_avg_loss,
                 f"fold_{fold_id}/val/accuracy": val_avg_acc,
             }
-            if isinstance(model, BCCNeuralDNF):
-                wandb_log_dict[f"fold_{fold_id}/delta"] = old_delta
+
             for key, meter in train_loss_meters.items():
                 if key == "overall_loss":
                     continue
