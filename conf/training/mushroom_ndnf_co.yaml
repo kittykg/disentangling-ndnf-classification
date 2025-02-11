@@ -1,0 +1,38 @@
+experiment_name: mushroom_ndnf_co_sl_nc32_b64_e500
+seed: null
+
+use_cuda: True
+use_mps: False
+
+log_interval: 100
+
+val_size: 0.15
+
+model_type: ndnf
+model_architecture:
+  n_conjunctions: 32
+
+
+optimiser: adam
+
+opt_theta_lr: 0.001
+opt_theta_weight_decay: 0.0001
+opt_theta_scheduler_step: 113
+
+opt_lambda_lr: 0.001
+opt_lambda_scheduler_step: 100
+opt_lambda_scheduler_gamma: 2
+
+use_multi_lambda: False
+
+loss_func: bce
+batch_size: 64
+loader_num_workers: 0
+epochs: 500
+
+dds:
+  initial_delta: 0.1
+  delta_decay_delay: 5
+  delta_decay_steps: 6
+  delta_decay_rate: 1.1
+delta_one_counter_threshold: 50

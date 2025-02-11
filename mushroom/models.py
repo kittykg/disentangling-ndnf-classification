@@ -61,7 +61,7 @@ class MushroomNeuralDNF(MushroomClassifier):
         # x: B x P
         return self.ndnf(x)
 
-    def get_weight_reg_loss(self) -> Tensor:
+    def get_weight_reg_loss(self, take_mean: bool = True) -> Tensor:
         p_t = torch.cat(
             [
                 parameter.view(-1)
@@ -69,7 +69,10 @@ class MushroomNeuralDNF(MushroomClassifier):
                 if parameter.requires_grad
             ]
         )
-        return torch.abs(p_t * (6 - torch.abs(p_t))).mean()
+        reg_loss = torch.abs(p_t * (6 - torch.abs(p_t)))
+        if take_mean:
+            return reg_loss.mean()
+        return reg_loss
 
     def change_ndnf(self, new_ndnf: NeuralDNF):
         self.ndnf = new_ndnf
