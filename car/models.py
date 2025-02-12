@@ -3,7 +3,12 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from neural_dnf.neural_dnf import BaseNeuralDNF, NeuralDNF, NeuralDNFEO
+from neural_dnf.neural_dnf import (
+    BaseNeuralDNF,
+    NeuralDNF,
+    NeuralDNFEO,
+    NeuralDNFMutexTanh,
+)
 
 CAR_NUM_CLASSES: int = 4
 
@@ -119,9 +124,49 @@ class CarNeuralDNFEO(CarBaseNeuralDNF):
         return ndnf_model
 
 
+class CarNeuralDNFMT(CarBaseNeuralDNF):
+    """
+    Car classifier with NeuralDNFMutexTanh as the underlying model.
+    This model is expected to be trained with NLLLoss, since it outputs log
+    probabilities.
+    """
+
+    ndnf: NeuralDNFMutexTanh
+
+    def _create_ndnf_model(self):
+        return NeuralDNFMutexTanh(
+            n_in=self.num_features,
+            n_conjunctions=self.num_conjunctions,
+            n_out=CAR_NUM_CLASSES,
+            delta=1.0,
+        )
+
+    def forward(self, x: Tensor) -> Tensor:
+        """
+        Returns the raw logits of the model. This is useful for training with
+        CrossEntropyLoss.
+        """
+        return self.ndnf.get_raw_output(x)
+
+    def get_all_forms(self, x: Tensor) -> dict[str, dict[str, Tensor]]:
+        return self.ndnf.get_all_forms(x)
+
+    def to_ndnf_model(self) -> CarNeuralDNF:
+        ndnf_model = CarNeuralDNF(
+            num_features=self.num_features,
+            num_conjunctions=self.num_conjunctions,
+        )
+        ndnf_model.ndnf = self.ndnf.to_ndnf()
+        return ndnf_model
+
+
 def construct_model(cfg: DictConfig, num_features: int) -> CarClassifier:
-    if cfg["model_type"] == "eo":
-        return CarNeuralDNFEO(
+
+    if cfg["model_type"] in ["eo", "mt"]:
+        ndnf_class = (
+            CarNeuralDNFEO if cfg["model_type"] == "eo" else CarNeuralDNFMT
+        )
+        return ndnf_class(
             num_features=num_features,
             num_conjunctions=cfg["model_architecture"]["n_conjunctions"],
         )

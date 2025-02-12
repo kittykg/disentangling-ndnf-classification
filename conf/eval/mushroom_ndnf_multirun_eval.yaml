@@ -1,6 +1,9 @@
 experiment_name: mushroom_ndnf_nc32_b64_e500
 multirun_seeds: [445, 961, 1143, 2227, 2598, 3080, 3113, 3233, 3296, 3864, 5077, 6648, 7635, 8714, 8930, 9395]
 
+# experiment_name: mushroom_ndnf_co_sl_nc32_b64_e500
+# multirun_seeds: [1080, 1894, 2019, 2841, 3267, 3402, 3620, 4611, 5474, 5817, 7089, 8142, 8351, 9128, 9430, 9935]
+
 use_cuda: True
 use_mps: False
 
