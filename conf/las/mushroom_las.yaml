@@ -1,0 +1,6 @@
+output_source: default_file
+is_ilasp: False
+subset:
+  use_subset: True
+  subset_proportion: 0.5
+  subset_random_state: 73
