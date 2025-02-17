@@ -50,65 +50,65 @@ from zoo.eval.ndnf_eval_common import (
 log = logging.getLogger()
 
 
+def comparison_fn(og_parsed_eval_log, new_prased_eval_log):
+    # check accuracy, if it is less than the original, then no prune
+    if new_prased_eval_log["accuracy"] < og_parsed_eval_log["accuracy"]:
+        return False
+
+    # check sample jaccard, if it is less than the original, then no prune
+    if (
+        new_prased_eval_log["sample_jaccard"]
+        < og_parsed_eval_log["sample_jaccard"]
+    ):
+        return False
+
+    # check macro jaccard, if it is less than the original, then no prune
+    if (
+        new_prased_eval_log["macro_jaccard"]
+        < og_parsed_eval_log["macro_jaccard"]
+    ):
+        return False
+
+    # error dict
+    og_error_dict = og_parsed_eval_log["error_dict"]
+    new_error_dict = new_prased_eval_log["error_dict"]
+
+    # check overall error class count, if it is greater than the original,
+    # then no prune
+    if (
+        new_error_dict["overall_error_class_count"]
+        > og_error_dict["overall_error_class_count"]
+    ):
+        return False
+
+    for k in [
+        "missing_predictions",
+        "multiple_predictions",
+        "wrong_predictions",
+    ]:
+        # for each of the error, check if the set of classes in the new
+        # dict is a subset of the classes in the original dict
+        og_error_classes = set([int(c) for c in og_error_dict[k].keys()])
+        new_error_classes = set([int(c) for c in new_error_dict[k].keys()])
+        if not new_error_classes.issubset(og_error_classes):
+            return False
+
+    return True
+
+
 def multiround_prune(
     model: NeuralDNF,
     device: torch.device,
     train_loader: DataLoader,
     eval_log_fn: Callable[[dict[str, Any]], dict[str, float]],
 ) -> int:
-    def comparison_fn(og_parsed_eval_log, new_prased_eval_log):
-        # check accuracy, if it is less than the original, then no prune
-        if new_prased_eval_log["accuracy"] < og_parsed_eval_log["accuracy"]:
-            return False
-
-        # check sample jaccard, if it is less than the original, then no prune
-        if (
-            new_prased_eval_log["sample_jaccard"]
-            < og_parsed_eval_log["sample_jaccard"]
-        ):
-            return False
-
-        # check macro jaccard, if it is less than the original, then no prune
-        if (
-            new_prased_eval_log["macro_jaccard"]
-            < og_parsed_eval_log["macro_jaccard"]
-        ):
-            return False
-
-        # error dict
-        og_error_dict = og_parsed_eval_log["error_dict"]
-        new_error_dict = new_prased_eval_log["error_dict"]
-
-        # check overall error class count, if it is greater than the original,
-        # then no prune
-        if (
-            new_error_dict["overall_error_class_count"]
-            > og_error_dict["overall_error_class_count"]
-        ):
-            return False
-
-        for k in [
-            "missing_predictions",
-            "multiple_predictions",
-            "wrong_predictions",
-        ]:
-            # for each of the error, check if the set of classes in the new
-            # dict is a subset of the classes in the original dict
-            og_error_classes = set([int(c) for c in og_error_dict[k].keys()])
-            new_error_classes = set([int(c) for c in new_error_dict[k].keys()])
-            if not new_error_classes.issubset(og_error_classes):
-                return False
-
-        return True
-
-    prune_iteration = 1
-
     prune_eval_function = lambda: parse_eval_return_meters_with_logging(
         eval_meters=ndnf_based_model_eval(model, device, train_loader),
         model_name="Prune (intermediate)",
         do_logging=False,
     )
 
+    prune_iteration = 1
     while True:
         log.info(f"Pruning iteration: {prune_iteration }")
         start_time = datetime.now()
