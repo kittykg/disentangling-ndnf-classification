@@ -81,7 +81,7 @@ def construct_model(cfg: DictConfig) -> BaseNeuralDNF | ZooMLP:
         n_in=model_arch_cfg["n_in"],
         n_conjunctions=model_arch_cfg["n_conjunctions"],
         n_out=ZOO_NUM_CLASSES,
-        delta=cfg["dds"]["initial_delta"],
+        delta=cfg["dds"]["initial_delta"] if "dds" in cfg else 1.0,
         weight_init_type=model_arch_cfg["weight_init_type"],
     )
 

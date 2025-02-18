@@ -34,7 +34,7 @@ except ValueError:  # Already removed
     pass
 
 from analysis import synthesize
-from utils import construct_ndnf_based_model, post_to_discord_webhook
+from utils import post_to_discord_webhook
 from zoo.data_utils_zoo import *
 from zoo.eval.ndnf_eval_common import (
     ndnf_based_model_eval,
@@ -45,6 +45,7 @@ from zoo.eval.ndnf_eval_common import (
     AFTER_TRAIN_MODEL_BASE_NAME,
     FIRST_PRUNE_MODEL_BASE_NAME,
 )
+from zoo.train_zoo import construct_model
 
 
 log = logging.getLogger()
@@ -248,7 +249,7 @@ def post_train_prune(cfg: DictConfig) -> None:
         model_dir = (
             Path(eval_cfg["storage_dir"]) / run_dir_name / f"fold_{fold_id}"
         )
-        model = construct_ndnf_based_model(eval_cfg)
+        model = construct_model(eval_cfg)
         assert isinstance(model, NeuralDNFEO)
         model.to(device)
         model_state = torch.load(

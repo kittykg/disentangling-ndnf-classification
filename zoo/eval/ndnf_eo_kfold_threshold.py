@@ -36,7 +36,7 @@ except ValueError:  # Already removed
     pass
 
 from analysis import synthesize
-from utils import construct_ndnf_based_model, post_to_discord_webhook
+from utils import post_to_discord_webhook
 from zoo.data_utils_zoo import *
 from zoo.eval.ndnf_eval_common import (
     ndnf_based_model_eval,
@@ -49,6 +49,7 @@ from zoo.eval.ndnf_eval_common import (
     THRESHOLD_RESULT_JSON_BASE_NAME,
 )
 from zoo.eval.ndnf_eo_kfold_prune import multiround_prune
+from zoo.train_zoo import construct_model
 
 
 log = logging.getLogger()
@@ -227,7 +228,7 @@ def post_train_threshold(cfg: DictConfig) -> None:
         )
         assert pruned_pth.exists(), f"Model {model_dir.name} not pruned!"
 
-        model = construct_ndnf_based_model(eval_cfg)
+        model = construct_model(eval_cfg)
         assert isinstance(model, NeuralDNFEO)
 
         model = model.to_ndnf()
