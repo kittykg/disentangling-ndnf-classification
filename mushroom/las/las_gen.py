@@ -26,6 +26,7 @@ DEFAULT_LAS_OUTPUT_DIR = file.parent / "las_output"
 if not DEFAULT_LAS_OUTPUT_DIR.exists():
     # create the dir
     DEFAULT_LAS_OUTPUT_DIR.mkdir()
+LAS_FILE_PREFIX = "mushroom"
 
 log = logging.getLogger()
 
@@ -52,7 +53,7 @@ def gen_las_example_and_background(cfg: DictConfig) -> None:
         example_file = sys.stdout
     else:
         example_file = open(
-            DEFAULT_LAS_OUTPUT_DIR / "mushroom_examples.las", "w"
+            DEFAULT_LAS_OUTPUT_DIR / f"{LAS_FILE_PREFIX}_examples.las", "w"
         )
 
     # Examples
@@ -80,7 +81,9 @@ def gen_las_example_and_background(cfg: DictConfig) -> None:
         bk_file = sys.stdout
     else:
         bk_file_name = (
-            "mushroom_bk_ilasp.las" if is_ilasp else "mushroom_bk.las"
+            f"{LAS_FILE_PREFIX}_bk_ilasp.las"
+            if is_ilasp
+            else f"{LAS_FILE_PREFIX}_bk.las"
         )
         bk_file = open(DEFAULT_LAS_OUTPUT_DIR / bk_file_name, "w")
 
