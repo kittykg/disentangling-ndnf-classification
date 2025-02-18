@@ -21,7 +21,6 @@ import clingo
 import hydra
 import numpy as np
 from omegaconf import DictConfig
-from sklearn.model_selection import train_test_split
 import torch
 
 from neural_dnf import NeuralDNF
@@ -39,10 +38,7 @@ except ValueError:  # Already removed
 from analysis import Meter, AccuracyMeter, synthesize
 from utils import post_to_discord_webhook
 
-from mushroom.data_utils_mushroom import (
-    MushroomDataset,
-    get_mushroom_data_np_from_path,
-)
+from mushroom.data_utils_mushroom import get_mushroom_data_np_from_path
 from mushroom.eval.eval_common import (
     parse_eval_return_meters_with_logging,
     DEFAULT_GEN_SEED,
@@ -50,7 +46,7 @@ from mushroom.eval.eval_common import (
     DISENTANGLED_MODEL_BASE_NAME,
     DISENTANGLED_RESULT_JSON_BASE_NAME,
 )
-from mushroom.models import MushroomNeuralDNF, construct_model
+from mushroom.models import MushroomNeuralDNF
 
 log = logging.getLogger()
 
