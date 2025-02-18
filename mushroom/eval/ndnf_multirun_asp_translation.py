@@ -153,7 +153,10 @@ def asp_eval(
 
         asp_base += rules
         if disjunction_syntax == "PRED":
-            # Binary classification, implicitly assume 0 is the negative
+            # The rules have only one disjunctive head "disj_0" (by default),
+            # which represents the target being true. We create a new
+            # disjunctive head "disj_1" which represents the target being false,
+            # and it is true if not disj_0.
             asp_base.append(
                 f"{disjunction_name}_1 :- not {disjunction_name}_0."
             )
