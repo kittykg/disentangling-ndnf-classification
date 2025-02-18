@@ -176,15 +176,11 @@ def _train(
 
             if isinstance(model, CarNeuralDNFEO):
                 # NeuralDNFEO
-                # Update jacc meters
+                # Update jacc meter
                 with torch.no_grad():
                     y_hat_prime = model.get_pre_eo_output(x)
                     y_hat_prime = (torch.tanh(y_hat_prime) > 0).long()
                 train_jacc_meter.update(y_hat_prime, y)
-
-                train_loss_meters["conj_reg_loss"].update(
-                    loss_dict["conj_reg_loss"].item()
-                )
 
                 # Update delta value
                 delta_dict = dds.step(model.ndnf)
