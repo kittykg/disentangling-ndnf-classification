@@ -1,0 +1,5 @@
+output_source: default_file
+is_ilasp: False
+
+k_folds: 4
+seed: 73
