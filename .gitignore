@@ -165,6 +165,7 @@ notebooks/
 model_storage/
 wandb/sweep*
 seeds.txt
+las_output/
 
 # scripts
 scripts/

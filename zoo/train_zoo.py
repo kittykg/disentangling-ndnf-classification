@@ -14,7 +14,7 @@ import torch
 from torch import Tensor, nn
 import wandb
 
-from neural_dnf.neural_dnf import BaseNeuralDNF, NeuralDNFEO
+from neural_dnf.neural_dnf import BaseNeuralDNF, NeuralDNF, NeuralDNFEO
 from neural_dnf.utils import DeltaDelayedExponentialDecayScheduler
 
 file = Path(__file__).resolve()
@@ -34,43 +34,88 @@ from analysis import (
     synthesize,
 )
 from zoo.data_utils_zoo import *
-from utils import (
-    construct_ndnf_based_model,
-    post_to_discord_webhook,
-    generate_weight_histogram,
-)
+from utils import post_to_discord_webhook, generate_weight_histogram
 
+
+ZOO_PROCESSED_NUM_FEATURES = 21
+ZOO_NUM_CLASSES = 7
 
 log = logging.getLogger()
 
 
+class ZooMLP(nn.Module):
+    def __init__(self, num_latent: int = 64):
+        super().__init__()
+
+        self.mlp = nn.Sequential(
+            nn.Linear(ZOO_PROCESSED_NUM_FEATURES, num_latent),
+            nn.Tanh(),
+            nn.Linear(num_latent, num_latent),
+            nn.Tanh(),
+            nn.Linear(num_latent, ZOO_NUM_CLASSES),
+        )
+
+    def forward(self, x: Tensor) -> Tensor:
+        return self.mlp(x)
+
+    def get_weight_reg_loss(self) -> Tensor:
+        # L1 regularisation
+        p_t = torch.cat(
+            [
+                parameter.view(-1)
+                for parameter in self.parameters()
+                if parameter.requires_grad
+            ]
+        )
+        return p_t.abs().mean()
+
+
+def construct_model(cfg: DictConfig) -> BaseNeuralDNF | ZooMLP:
+    model_arch_cfg = cfg["model_architecture"]
+    model_type = cfg["model_type"]
+    if model_type == "mlp":
+        return ZooMLP(model_arch_cfg["num_latent"])
+
+    model_class = NeuralDNFEO if model_type == "eo" else NeuralDNF
+    return model_class(
+        n_in=model_arch_cfg["n_in"],
+        n_conjunctions=model_arch_cfg["n_conjunctions"],
+        n_out=ZOO_NUM_CLASSES,
+        delta=cfg["dds"]["initial_delta"],
+        weight_init_type=model_arch_cfg["weight_init_type"],
+    )
+
+
 def loss_calculation(
-    model: BaseNeuralDNF,
+    model: BaseNeuralDNF | ZooMLP,
     criterion: torch.nn.Module,
     y_hat: Tensor,
     y: Tensor,
-    conj_out: Tensor,
+    conj_out: Tensor | None,
 ) -> dict[str, Tensor]:
-    base_loss = criterion(y_hat, y)
+    loss_dict = {"base_loss": criterion(y_hat, y)}
 
     # Weight regularisation loss
-    p_t = torch.cat(
-        [
-            parameter.view(-1)
-            for parameter in model.parameters()
-            if parameter.requires_grad
-        ]
-    )
-    weight_reg_loss = torch.abs(p_t * (6 - torch.abs(p_t))).mean()
+    if isinstance(model, BaseNeuralDNF):
+        p_t = torch.cat(
+            [
+                parameter.view(-1)
+                for parameter in model.parameters()
+                if parameter.requires_grad
+            ]
+        )
+        weight_reg_loss = torch.abs(p_t * (6 - torch.abs(p_t))).mean()
+    else:
+        weight_reg_loss = model.get_weight_reg_loss()
+    loss_dict["weight_reg_loss"] = weight_reg_loss
 
-    # Conjunction regularisation loss (push to ±1)
-    conj_reg_loss = (1 - conj_out.abs()).mean()
+    if isinstance(model, BaseNeuralDNF):
+        # Conjunction regularisation loss (push to ±1)
+        assert conj_out is not None
+        conj_reg_loss = (1 - conj_out.abs()).mean()
+        loss_dict["conj_reg_loss"] = conj_reg_loss
 
-    return {
-        "base_loss": base_loss,
-        "weight_reg_loss": weight_reg_loss,
-        "conj_reg_loss": conj_reg_loss,
-    }
+    return loss_dict
 
 
 def train_fold(
@@ -81,13 +126,11 @@ def train_fold(
     device: torch.device,
     dataset: ZooDataset,
     use_wandb: bool,
-) -> tuple[BaseNeuralDNF, dict[str, float]]:
-
+) -> tuple[BaseNeuralDNF | ZooMLP, dict[str, float]]:
     # Model
-    model = construct_ndnf_based_model(
-        training_cfg, delta=training_cfg["dds"]["initial_delta"]
-    )
+    model = construct_model(training_cfg)
     model.to(device)
+    is_ndnf = isinstance(model, BaseNeuralDNF)
 
     # Data loaders
     train_loader, val_loader = get_zoo_dataloaders(
@@ -120,38 +163,54 @@ def train_fold(
     criterion = nn.CrossEntropyLoss()
 
     # Delta delay scheduler
-    dds = DeltaDelayedExponentialDecayScheduler(
-        initial_delta=training_cfg["dds"]["initial_delta"],
-        delta_decay_delay=training_cfg["dds"]["delta_decay_delay"],
-        delta_decay_steps=training_cfg["dds"]["delta_decay_steps"],
-        delta_decay_rate=training_cfg["dds"]["delta_decay_rate"],
-        target_module_type=model.__class__.__name__,
-    )
-    delta_one_counter = 0
+    if is_ndnf:
+        dds = DeltaDelayedExponentialDecayScheduler(
+            initial_delta=training_cfg["dds"]["initial_delta"],
+            delta_decay_delay=training_cfg["dds"]["delta_decay_delay"],
+            delta_decay_steps=training_cfg["dds"]["delta_decay_steps"],
+            delta_decay_rate=training_cfg["dds"]["delta_decay_rate"],
+            target_module_type=model.__class__.__name__,
+        )
+        delta_one_counter = 0
 
     # Other training settings
     gen_weight_hist = training_cfg.get("gen_weight_hist", False)
     log_interval = training_cfg.get("log_interval", 100)
 
+    # Meters
+    train_loss_meters = {
+        "overall_loss": MetricValueMeter("overall_loss_meter"),
+        "base_loss": MetricValueMeter("base_loss_meter"),
+        "weight_reg_loss": MetricValueMeter("weight_reg_loss_meter"),
+    }
+    if is_ndnf:
+        train_loss_meters["conj_reg_loss"] = MetricValueMeter(
+            "conj_reg_loss_meter"
+        )
+    train_acc_meter = AccuracyMeter()
+    train_jacc_meter = JaccardScoreMeter()
+    epoch_val_loss_meter = MetricValueMeter("val_loss_meter")
+    epoch_val_acc_meter = AccuracyMeter()
+    epoch_val_jacc_meter = JaccardScoreMeter()
+
     for epoch in range(training_cfg["epochs"]):
         # -------------------------------------------------------------------- #
         #  1. Training
         # -------------------------------------------------------------------- #
-        train_loss_meters = {
-            "overall_loss": MetricValueMeter("overall_loss_meter"),
-            "base_loss": MetricValueMeter("base_loss_meter"),
-            "weight_reg_loss": MetricValueMeter("weight_reg_loss_meter"),
-            "conj_reg_loss": MetricValueMeter("conj_reg_loss_meter"),
-        }
-        train_perf_score_meter = AccuracyMeter()
+        for m in train_loss_meters.values():
+            m.reset()
+        train_acc_meter.reset()
+        train_jacc_meter.reset()
         model.train()
 
         for data in train_loader:
             optimiser.zero_grad()
 
-            x, y = get_x_and_y_zoo(data, device, use_ndnf=True)
+            x, y = get_x_and_y_zoo(data, device, use_ndnf=is_ndnf)
             y_hat = model(x)
-            conj_out = model.get_conjunction(x)
+            conj_out = None
+            if is_ndnf:
+                model.get_conjunction(x)
 
             loss_dict = loss_calculation(model, criterion, y_hat, y, conj_out)
 
@@ -159,9 +218,12 @@ def train_fold(
                 loss_dict["base_loss"]
                 + training_cfg["aux_loss"]["weight_l1_mod_lambda"]
                 * loss_dict["weight_reg_loss"]
-                + training_cfg["aux_loss"]["tanh_conj_lambda"]
-                * loss_dict["conj_reg_loss"]
             )
+            if is_ndnf:
+                loss += (
+                    training_cfg["aux_loss"]["tanh_conj_lambda"]
+                    * loss_dict["conj_reg_loss"]
+                )
 
             loss.backward()
             optimiser.step()
@@ -170,51 +232,90 @@ def train_fold(
             for key, loss_val in loss_dict.items():
                 train_loss_meters[key].update(loss_val.item())
             train_loss_meters["overall_loss"].update(loss.item())
-            train_perf_score_meter.update(y_hat, y)
+            train_acc_meter.update(y_hat, y)
 
-        # Update delta value
-        delta_dict = dds.step(model)
-        new_delta = delta_dict["new_delta_vals"][0]
-        old_delta = delta_dict["old_delta_vals"][0]
+        if is_ndnf:
+            # NeuralDNF / NeuralDNFEO
+            # Update meters
+            with torch.no_grad():
+                y_hat_prime = (
+                    torch.tanh(
+                        model.get_plain_output(x)
+                        if isinstance(model, NeuralDNFEO)
+                        else y_hat
+                    )
+                    > 0
+                ).long()
+            train_jacc_meter.update(y_hat_prime, y)
 
-        if new_delta == 1.0:
-            # The first time where new_delta_val becomes 1, the network isn't
-            # train with delta being 1 for that epoch. So delta_one_counter
-            # starts with -1, and when new_delta_val is first time being 1,
-            # the delta_one_counter becomes 0.
-            # We do not use the delta_one_counter for now, but it can be used
-            # to customise when to add auxiliary loss
-            delta_one_counter += 1
+            # Update delta value
+            delta_dict = dds.step(model)
+            new_delta = delta_dict["new_delta_vals"][0]
+            old_delta = delta_dict["old_delta_vals"][0]
+
+            if new_delta == 1.0:
+                # The first time where new_delta_val becomes 1, the network
+                # isn't train with delta being 1 for that epoch. So
+                # delta_one_counter starts with -1, and when new_delta_val is
+                # first time being 1, the delta_one_counter becomes 0. We do not
+                # use the delta_one_counter for now, but it can be used to
+                # customise when to add auxiliary loss
+                delta_one_counter += 1
+        else:
+            # MLP
+            # Update jacc meters
+            # convert the max value to the class
+            y_hat_prime = torch.zeros(len(y), ZOO_NUM_CLASSES).long()
+            y_hat_prime[range(len(y)), torch.argmax(y_hat, dim=1).long()] = 1
+            train_jacc_meter.update(y_hat_prime, y)
 
         # Log average performance for train
         avg_loss = train_loss_meters["overall_loss"].get_average()
-        avg_perf = train_perf_score_meter.get_average()
+        avg_acc = train_acc_meter.get_average()
+        avg_sample_jacc = train_jacc_meter.get_average()
+        avg_macro_jacc = train_jacc_meter.get_average("macro")
+        assert isinstance(avg_sample_jacc, float)
+        assert isinstance(avg_macro_jacc, float)
 
         if epoch % log_interval == 0:
-            log.info(
-                f"  Fold [{fold_id:2d}] [{epoch + 1:3d}] "
-                f"Train  Delta: {old_delta:.3f}  avg loss: {avg_loss:.3f}  "
-                f"avg perf: {avg_perf:.3f}"
-            )
+            if is_ndnf:
+                log_info_str = (
+                    f"  Fold [{fold_id:2d}] [{epoch + 1:3d}] Train  "
+                    f"Delta: {old_delta:.3f}  avg loss: {avg_loss:.3f}  "
+                    f"avg acc: {avg_acc:.3f}  "
+                    f"avg sample jacc: {avg_sample_jacc:.3f}  "
+                    f"avg macro jacc: {avg_macro_jacc:.3f}"
+                )
+            else:
+                log_info_str = (
+                    f"  Fold [{fold_id:2d}] [{epoch + 1:3d}] "
+                    f"Train                avg loss: {avg_loss:.3f}  "
+                    f"avg acc: {avg_acc:.3f}  "
+                    f"avg sample jacc: {avg_sample_jacc:.3f}  "
+                    f"avg macro jacc: {avg_macro_jacc:.3f}"
+                )
+            log.info(log_info_str)
 
         # -------------------------------------------------------------------- #
         # 2. Evaluate performance on val
         # -------------------------------------------------------------------- #
-        epoch_val_loss_meter = MetricValueMeter("val_loss_meter")
-        epoch_val_acc_meter = AccuracyMeter()
-        epoch_val_jacc_meter = JaccardScoreMeter()
-
+        epoch_val_loss_meter.reset()
+        epoch_val_acc_meter.reset()
+        epoch_val_jacc_meter.reset()
         model.eval()
 
         for data in val_loader:
             with torch.no_grad():
                 # Get model output and compute loss
-                x, y = get_x_and_y_zoo(data, device, use_ndnf=True)
+                x, y = get_x_and_y_zoo(data, device, use_ndnf=is_ndnf)
                 if isinstance(model, NeuralDNFEO):
                     y_hat = model.get_plain_output(x)
                 else:
                     y_hat = model(x)
-                conj_out = model.get_conjunction(x)
+
+                conj_out = None
+                if is_ndnf:
+                    conj_out = model.get_conjunction(x)
 
                 loss_dict = loss_calculation(
                     model, criterion, y_hat, y, conj_out
@@ -224,18 +325,27 @@ def train_fold(
                     loss_dict["base_loss"]
                     + training_cfg["aux_loss"]["weight_l1_mod_lambda"]
                     * loss_dict["weight_reg_loss"]
-                    + training_cfg["aux_loss"]["tanh_conj_lambda"]
-                    * loss_dict["conj_reg_loss"]
-                ).item()
+                )
+                if is_ndnf:
+                    loss += (
+                        training_cfg["aux_loss"]["tanh_conj_lambda"]
+                        * loss_dict["conj_reg_loss"]
+                    )
 
                 # Update meters
-                epoch_val_loss_meter.update(loss)
+                epoch_val_loss_meter.update(loss.item())
                 epoch_val_acc_meter.update(y_hat, y)
-
-                # To get the jaccard score, we need to threshold the tanh activation
-                # to get the binary prediction of each class
-                y_hat = (torch.tanh(y_hat) > 0).long()
-                epoch_val_jacc_meter.update(y_hat, y)
+                if is_ndnf:
+                    # To get the jaccard score, we need to threshold the tanh
+                    # activation to get the binary prediction of each class
+                    y_hat = (torch.tanh(y_hat) > 0).long()
+                    epoch_val_jacc_meter.update(y_hat, y)
+                else:
+                    y_hat_prime = torch.zeros(len(y), ZOO_NUM_CLASSES).long()
+                    y_hat_prime[
+                        range(len(y)), torch.argmax(y_hat, dim=1).long()
+                    ] = 1
+                    epoch_val_jacc_meter.update(y_hat_prime, y)
 
         val_avg_loss = epoch_val_loss_meter.get_average()
         val_avg_acc = epoch_val_acc_meter.get_average()
@@ -262,22 +372,25 @@ def train_fold(
         # -------------------------------------------------------------------- #
         if use_wandb:
             wandb_log_dict = {
-                f"fold_{fold_id}/epoch": epoch,
-                f"fold_{fold_id}/delta": old_delta,
+                f"fold_{fold_id}/train/epoch": epoch,
                 f"fold_{fold_id}/train/loss": avg_loss,
-                f"fold_{fold_id}/train/accuracy": avg_perf,
+                f"fold_{fold_id}/train/accuracy": avg_acc,
+                f"fold_{fold_id}/train/sample_jaccard": avg_sample_jacc,
+                f"fold_{fold_id}/train/macro_jaccard": avg_macro_jacc,
                 f"fold_{fold_id}/val/loss": val_avg_loss,
                 f"fold_{fold_id}/val/accuracy": val_avg_acc,
                 f"fold_{fold_id}/val/sample_jaccard": val_sample_jaccard,
                 f"fold_{fold_id}/val/macro_jaccard": val_macro_jaccard,
             }
+            if is_ndnf:
+                wandb_log_dict[f"fold_{fold_id}/delta"] = old_delta
             for key, meter in train_loss_meters.items():
                 if key == "overall_loss":
                     continue
                 wandb_log_dict[f"fold_{fold_id}/train/{key}"] = (
                     meter.get_average()
                 )
-            if gen_weight_hist:
+            if gen_weight_hist and is_ndnf:
                 # Generate weight histogram
                 f1, f2 = generate_weight_histogram(model)
                 wandb_log_dict[f"fold_{fold_id}/conj_w_hist"] = wandb.Image(f1)
@@ -286,7 +399,9 @@ def train_fold(
 
     return model, {
         "train_loss": avg_loss,
-        "train_accuracy": avg_perf,
+        "train_accuracy": avg_acc,
+        "train_sample_jaccard": avg_sample_jacc,
+        "train_macro_jaccard": avg_macro_jacc,
         "val_loss": val_avg_loss,
         "val_accuracy": val_avg_acc,
         "val_sample_jaccard": val_sample_jaccard,
@@ -312,15 +427,15 @@ def train(cfg: DictConfig, run_dir: Path) -> dict[str, float]:
         device = torch.device("cuda" if use_cuda else "cpu")
     log.info(f"Device: {device}")
 
-    # Fold results
-    models = []
-    fold_results = []
-
     # Load data
     X, y, _ = get_zoo_data_np_from_path(
         data_dir_path=Path(cfg["dataset"]["save_dir"])
     )
     dataset = ZooDataset(X, y)
+
+    # Fold results
+    models = []
+    fold_results = []
 
     # Stratified K-Fold
     skf = StratifiedKFold(
@@ -371,7 +486,7 @@ def train(cfg: DictConfig, run_dir: Path) -> dict[str, float]:
 @hydra.main(version_base=None, config_path="../conf", config_name="config")
 def run_experiment(cfg: DictConfig) -> None:
     # We expect the experiment name to be in the format of:
-    # zoo_ndnf_{(eo)}_...
+    # zoo_{mlp/ndnf/ndnf_eo}_...
     experiment_name = cfg["training"]["experiment_name"]
 
     seed = cfg["training"]["seed"]
@@ -450,4 +565,8 @@ def run_experiment(cfg: DictConfig) -> None:
 
 
 if __name__ == "__main__":
+    import warnings
+
+    warnings.filterwarnings("ignore")
+
     run_experiment()

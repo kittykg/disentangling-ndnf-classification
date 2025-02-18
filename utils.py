@@ -4,11 +4,7 @@ import requests
 
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
-from omegaconf import DictConfig
-import torch
-from torch import nn
 
-from neural_dnf import NeuralDNF, NeuralDNFEO
 from neural_dnf.neural_dnf import BaseNeuralDNF
 
 ################################################################################
@@ -35,57 +31,6 @@ def generate_weight_histogram(
         plt.text(arr[1][i], arr[0][i], str(int(arr[0][i])))  # type: ignore
 
     return f1, f2
-
-
-################################################################################
-#                                 Model management                             #
-################################################################################
-
-model_type_str_to_class: dict[str, type[BaseNeuralDNF]] = {
-    "plain": NeuralDNF,
-    "eo": NeuralDNFEO,
-}
-
-
-def construct_mlp(cfg: DictConfig, delta: float = 1.0) -> nn.Sequential:
-    model_arch_cfg = cfg["model_architecture"]
-    layers = []
-    n_in = model_arch_cfg["n_in"]
-    for n_out in model_arch_cfg["hidden_layers"]:
-        layers.append(nn.Linear(n_in, n_out))
-        layers.append(nn.ReLU())
-        n_in = n_out
-    layers.append(nn.Linear(n_in, model_arch_cfg["num_classes"]))
-    return nn.Sequential(*layers)
-
-
-def construct_ndnf_based_model(
-    cfg: DictConfig, delta: float = 1.0
-) -> BaseNeuralDNF:
-    model_class = model_type_str_to_class[cfg["model_type"]]
-    model_arch_cfg = cfg["model_architecture"]
-    return model_class(
-        n_in=model_arch_cfg["n_in"],
-        n_conjunctions=model_arch_cfg["n_conjunctions"],
-        n_out=model_arch_cfg["num_classes"],
-        delta=delta,
-        weight_init_type=model_arch_cfg["weight_init_type"],
-    )
-
-
-def load_pretrained_model_state_dict(
-    model: nn.Module, model_pth: str, device: torch.device
-) -> None:
-    pretrain_dict = torch.load(
-        model_pth, map_location=device, weights_only=True
-    )
-    model.load_state_dict(pretrain_dict)
-    model.to(device)
-
-
-def freeze_model(model: nn.Module):
-    for _, param in model.named_parameters():
-        param.requires_grad = False
 
 
 ################################################################################
