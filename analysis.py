@@ -26,12 +26,12 @@ def collate(result_dicts: list[dict[str, Any]]) -> dict[str, list[Any]]:
 
 def synthesize(array, compute_ste: bool = True) -> OrderedDict[str, float]:
     d = OrderedDict()
-    d["mean"] = np.mean(array)
-    d["std"] = np.std(array)
-    d["min"] = np.amin(array)
-    d["max"] = np.amax(array)
+    d["mean"] = float(np.mean(array))
+    d["std"] = float(np.std(array))
+    d["min"] = float(np.amin(array))
+    d["max"] = float(np.amax(array))
     if compute_ste:
-        d["ste"] = np.std(array) / np.sqrt(len(array))
+        d["ste"] = float(np.std(array) / np.sqrt(len(array)))
     return d
 
 

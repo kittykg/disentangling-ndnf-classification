@@ -10,6 +10,7 @@ from pathlib import Path
 import random
 import sys
 import traceback
+from typing import Any
 
 import hydra
 import numpy as np
@@ -31,6 +32,8 @@ from utils import post_to_discord_webhook
 
 from car.data_utils_car import get_car_data_np_from_path, CarDataset
 from car.eval.eval_common import (
+    EVAL_RELEVANT_KEYS,
+    EVAL_ERROR_DICT_RELEVANT_KEYS,
     car_classifier_eval,
     parse_eval_return_meters_with_logging,
     DEFAULT_GEN_SEED,
@@ -82,7 +85,7 @@ def multirun_after_train_eval(cfg: DictConfig) -> None:
         ]
     )
 
-    single_eval_results: list[dict[str, float]] = []
+    single_eval_results: list[dict[str, Any]] = []
     for s in eval_cfg["multirun_seeds"]:
         # Load model
         model_dir = (
@@ -110,7 +113,6 @@ def multirun_after_train_eval(cfg: DictConfig) -> None:
                 raw_eval_dict,
                 f"Car-{'NDNF' if isinstance(model, CarNeuralDNF) else 'MLP'}",
                 do_logging=False,
-                filter_out_list=True,
             )
         )
         eval_log = parse_eval_return_meters_with_logging(
@@ -125,13 +127,17 @@ def multirun_after_train_eval(cfg: DictConfig) -> None:
         log.info("============================================================")
 
     # Synthesize the results
-    relevant_keys = list(single_eval_results[0].keys())
     return_dict = {}
-    for k in relevant_keys:
-        for sk, sv in synthesize(
-            np.array([d[k] for d in single_eval_results])
-        ).items():
-            return_dict[f"{k}/{sk}"] = float(sv)
+    for k in EVAL_RELEVANT_KEYS:
+        synth_dict = synthesize(np.array([d[k] for d in single_eval_results]))
+        for sk, sv in synth_dict.items():
+            return_dict[f"{k}/{sk}"] = sv
+    for k in EVAL_ERROR_DICT_RELEVANT_KEYS:
+        synth_dict = synthesize(
+            np.array([d["error_dict"][k] for d in single_eval_results])
+        )
+        for sk, sv in synth_dict.items():
+            return_dict[f"error_dict/{k}/{sk}"] = sv
 
     log.info("Synthesized results:")
     for k, v in return_dict.items():

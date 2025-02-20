@@ -91,7 +91,7 @@ class CarNeuralDNF(CarBaseNeuralDNF):
 
     ndnf: NeuralDNF
 
-    def _create_ndnf_model(self):
+    def _create_ndnf_model(self) -> NeuralDNF:
         return NeuralDNF(
             n_in=self.num_features,
             n_conjunctions=self.num_conjunctions,
@@ -99,11 +99,14 @@ class CarNeuralDNF(CarBaseNeuralDNF):
             delta=1.0,
         )
 
+    def change_ndnf(self, new_ndnf: NeuralDNF) -> None:
+        self.ndnf = new_ndnf
+
 
 class CarNeuralDNFEO(CarBaseNeuralDNF):
     ndnf: NeuralDNFEO
 
-    def _create_ndnf_model(self):
+    def _create_ndnf_model(self) -> NeuralDNFEO:
         return NeuralDNFEO(
             n_in=self.num_features,
             n_conjunctions=self.num_conjunctions,

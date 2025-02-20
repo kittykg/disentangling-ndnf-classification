@@ -38,6 +38,20 @@ DISENTANGLED_MODEL_BASE_NAME = "model_disentangled"
 DISENTANGLED_RESULT_JSON_BASE_NAME = "disentangled_result"
 
 
+EVAL_RELEVANT_KEYS = ["accuracy", "sample_jaccard", "macro_jaccard"]
+EVAL_ERROR_DICT_RELEVANT_KEYS = [
+    "missing_error_class_count",
+    "missing_overall_error_count",
+    "multiple_error_class_count",
+    "multiple_overall_error_count",
+    "wrong_error_class_count",
+    "wrong_overall_error_count",
+    "overall_error_count",
+    "overall_error_rate",
+    "overall_error_class_count",
+]
+
+
 def car_classifier_eval(
     model: CarClassifier,
     device: torch.device,
