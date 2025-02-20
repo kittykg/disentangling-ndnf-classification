@@ -133,13 +133,13 @@ def create_intermediate_ndnf(model: NeuralDNF) -> NeuralDNF:
 
 
 def threshold_intermediate_model_disjunctive_layer(
-    intermediate_bcc_model: MushroomNeuralDNF,
+    intermediate_model: MushroomNeuralDNF,
     device: torch.device,
     train_loader: DataLoader,
     do_logging: bool = False,
 ) -> float:
     intermediate_disj_weight = (
-        intermediate_bcc_model.ndnf.disjunctions.weights.data.clone()
+        intermediate_model.ndnf.disjunctions.weights.data.clone()
     )
     threshold_upper_bound = round(
         (
@@ -160,13 +160,13 @@ def threshold_intermediate_model_disjunctive_layer(
     t_vals = torch.arange(0, threshold_upper_bound, 0.01)
     result_dicts_with_t_val = []
     for v in t_vals:
-        intermediate_bcc_model.ndnf.disjunctions.weights.data = (
+        intermediate_model.ndnf.disjunctions.weights.data = (
             (torch.abs(intermediate_disj_weight) > v)
             * torch.sign(intermediate_disj_weight)
             * 6
         )
         threshold_eval_dict = mushroom_classifier_eval(
-            intermediate_bcc_model, device, train_loader
+            intermediate_model, device, train_loader
         )
         acc_meter: AccuracyMeter = threshold_eval_dict["acc_meter"]  # type: ignore
         accuracy = acc_meter.get_average()
@@ -212,7 +212,7 @@ def threshold_intermediate_model_disjunctive_layer(
     # Apply the best threshold
     best_t_val = sorted_result_dicts[0]["t_val"]
     log.info(f"Applying t_val: {best_t_val:.2f}")
-    intermediate_bcc_model.ndnf.disjunctions.weights.data = (
+    intermediate_model.ndnf.disjunctions.weights.data = (
         (torch.abs(intermediate_disj_weight) > best_t_val)
         * torch.sign(intermediate_disj_weight)
         * 6
