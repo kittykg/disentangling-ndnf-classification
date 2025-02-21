@@ -65,6 +65,9 @@ log = logging.getLogger()
 
 
 class ChainedNDNF(torch.nn.Module):
+    sub_ndnf: NeuralDNF
+    sub_ndnf_disj: NeuralDNF
+
     def __init__(self, sub_ndnf, sub_ndnf_disj):
         super().__init__()
         self.sub_ndnf = sub_ndnf
