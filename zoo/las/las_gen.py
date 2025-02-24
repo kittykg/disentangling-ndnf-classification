@@ -94,33 +94,32 @@ def gen_las_example_and_background(cfg: DictConfig) -> None:
         if output_source != "stdout":
             example_file.close()
 
-        # Background knowledge
-        is_ilasp = cfg["las"]["is_ilasp"]
-        if output_source == "stdout":
-            bk_file = sys.stdout
-        else:
-            bk_file_name = (
-                f"{LAS_FILE_PREFIX}_bk_ilasp_f{fold_id}.las"
-                if is_ilasp
-                else f"{LAS_FILE_PREFIX}_bk_f{fold_id}.las"
-            )
-            bk_file = open(DEFAULT_LAS_OUTPUT_DIR / bk_file_name, "w")
+    # Background knowledge
+    is_ilasp = cfg["las"]["is_ilasp"]
+    if output_source == "stdout":
+        bk_file = sys.stdout
+    else:
+        bk_file_name = (
+            f"{LAS_FILE_PREFIX}_bk_ilasp.las"
+            if is_ilasp
+            else f"{LAS_FILE_PREFIX}_bk.las"
+        )
+        bk_file = open(DEFAULT_LAS_OUTPUT_DIR / bk_file_name, "w")
 
-        print(f"class_id(0..{num_classes -1}).", file=bk_file)
-        print(":- class(X),  class(Y),  X < Y.", file=bk_file)
-        print("#modeh(class(const(class_id))).", file=bk_file)
-        for i in range(train_X.shape[1]):
-            print(f"#modeb(has_attr_{i}).", file=bk_file)
-            if not is_ilasp:
-                # FastLas requires explicit 'not' to include in hypothesis space
-                print(f"#modeb(not has_attr_{i}).", file=bk_file)
+    print(f"class_id(0..{num_classes -1}).", file=bk_file)
+    print("#modeh(class(const(class_id))).", file=bk_file)
+    for i in range(train_X.shape[1]):
+        print(f"#modeb(has_attr_{i}).", file=bk_file)
         if not is_ilasp:
-            # FastLas scoring function
-            print('#bias("penalty(1, head).").', file=bk_file)
-            print('#bias("penalty(1, body(X)) :- in_body(X).").', file=bk_file)
+            # FastLas requires explicit 'not' to include in hypothesis space
+            print(f"#modeb(not has_attr_{i}).", file=bk_file)
+    if not is_ilasp:
+        # FastLas scoring function
+        print('#bias("penalty(1, head).").', file=bk_file)
+        print('#bias("penalty(1, body(X)) :- in_body(X).").', file=bk_file)
 
-        if output_source != "stdout":
-            bk_file.close()
+    if output_source != "stdout":
+        bk_file.close()
 
 
 @hydra.main(version_base=None, config_path="../../conf", config_name="config")

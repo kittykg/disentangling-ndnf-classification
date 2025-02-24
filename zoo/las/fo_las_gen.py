@@ -26,6 +26,7 @@ if not DEFAULT_LAS_OUTPUT_DIR.exists():
     # create the dir
     DEFAULT_LAS_OUTPUT_DIR.mkdir()
 LAS_FILE_PREFIX = "zoo"
+ZOO_NUM_CLASSES = 7
 
 log = logging.getLogger()
 
@@ -36,7 +37,6 @@ def gen_las_example_and_background(cfg: DictConfig) -> None:
     # data (as pandas dataframes)
     X: pd.DataFrame = uci_dataset.data.features  # type: ignore
     y: pd.DataFrame = uci_dataset.data.targets  # type: ignore
-    num_classes = int(y.nunique())  # type: ignore
 
     skf = StratifiedKFold(
         n_splits=cfg["las"]["k_folds"],
@@ -77,7 +77,7 @@ def gen_las_example_and_background(cfg: DictConfig) -> None:
                             lambda k: (
                                 f"    class({k})" if k != target else ""
                             ),
-                            range(num_classes),
+                            range(ZOO_NUM_CLASSES),
                         ),
                     )
                 ),
@@ -97,50 +97,49 @@ def gen_las_example_and_background(cfg: DictConfig) -> None:
         if output_source != "stdout":
             example_file.close()
 
-        # Background knowledge
-        is_ilasp = cfg["las"]["is_ilasp"]
-        if output_source == "stdout":
-            bk_file = sys.stdout
-        else:
-            bk_file_name = (
-                f"{LAS_FILE_PREFIX}_fo_bk_ilasp_f{fold_id}.las"
-                if is_ilasp
-                else f"{LAS_FILE_PREFIX}_fo_bk_f{fold_id}.las"
-            )
-            bk_file = open(DEFAULT_LAS_OUTPUT_DIR / bk_file_name, "w")
+    # Background knowledge
+    is_ilasp = cfg["las"]["is_ilasp"]
+    if output_source == "stdout":
+        bk_file = sys.stdout
+    else:
+        bk_file_name = (
+            f"{LAS_FILE_PREFIX}_fo_bk_ilasp.las"
+            if is_ilasp
+            else f"{LAS_FILE_PREFIX}_fo_bk.las"
+        )
+        bk_file = open(DEFAULT_LAS_OUTPUT_DIR / bk_file_name, "w")
 
-        # Type the attributes and generate the mode biases
-        # For each column, get the feature name and all unique values
-        mode_biases = []
-        for col in X.columns:
-            # mode biases
-            type_name = col.replace("-", "_")
-            mode_biases.append(f"#modeb(has_{type_name}(var({type_name}))).")
-            if not is_ilasp:
-                # FastLas requires explicit 'not' to include in hypothesis space
-                mode_biases.append(
-                    f"#modeb(not has_{type_name}(var({type_name})))."
-                )
-
-            for val in X[col].unique():
-                # Typing
-                # replace "-" with "_"
-                var_name = f"{col}-{val}".replace("-", "_")
-                print(f"{type_name}({var_name}).", file=bk_file)
-
-        print(f"class_id(0..{num_classes -1}).", file=bk_file)
-        print(":- class(X),  class(Y),  X < Y.", file=bk_file)
-        print("#modeh(class(const(class_id))).", file=bk_file)
-        for m in mode_biases:
-            print(m, file=bk_file)
-
+    # Type the attributes and generate the mode biases
+    # For each column, get the feature name and all unique values
+    mode_biases = []
+    for col in X.columns:
+        # mode biases
+        type_name = col.replace("-", "_")
+        mode_biases.append(f"#modeb(1, has_{type_name}(var({type_name}))).")
         if not is_ilasp:
-            # FastLas scoring function
-            print('#bias("penalty(1, head).").', file=bk_file)
-            print('#bias("penalty(1, body(X)) :- in_body(X).").', file=bk_file)
+            # FastLas requires explicit 'not' to include in hypothesis space
+            mode_biases.append(
+                f"#modeb(not has_{type_name}(var({type_name})))."
+            )
 
-        if output_source != "stdout":
-            bk_file.close()
+        for val in X[col].unique():
+            # Typing
+            # replace "-" with "_"
+            var_name = f"{col}-{val}".replace("-", "_")
+            print(f"{type_name}({var_name}).", file=bk_file)
+
+    print(f"class_id(0..{ZOO_NUM_CLASSES-1}).", file=bk_file)
+    print("#modeh(class(const(class_id))).", file=bk_file)
+    for m in mode_biases:
+        print(m, file=bk_file)
+
+    if not is_ilasp:
+        # FastLas scoring function
+        print('#bias("penalty(1, head).").', file=bk_file)
+        print('#bias("penalty(1, body(X)) :- in_body(X).").', file=bk_file)
+
+    if output_source != "stdout":
+        bk_file.close()
 
 
 @hydra.main(version_base=None, config_path="../../conf", config_name="config")
