@@ -42,11 +42,7 @@ from car.data_utils_car import (
     get_car_data_np_from_path,
     get_x_and_y_car,
 )
-from car.models import (
-    CAR_NUM_CLASSES,
-    CarNeuralDNFMT,
-    construct_model,
-)
+from car.models import CarNeuralDNFMT, construct_model
 
 
 log = logging.getLogger()
@@ -184,19 +180,19 @@ def _train(
                 y_hat_prime = (all_forms_dict["disjunction"]["tanh"] > 0).long()
             train_jacc_meter.update(y_hat_prime, y)
 
-            # Update delta value
-            delta_dict = dds.step(model.ndnf)
-            new_delta = delta_dict["new_delta_vals"][0]
-            old_delta = delta_dict["old_delta_vals"][0]
+        # Update delta value
+        delta_dict = dds.step(model.ndnf)
+        new_delta = delta_dict["new_delta_vals"][0]
+        old_delta = delta_dict["old_delta_vals"][0]
 
-            if new_delta == 1.0:
-                # The first time where new_delta_val becomes 1, the network
-                # isn't train with delta being 1 for that epoch. So
-                # delta_one_counter starts with -1, and when new_delta_val
-                # is first time being 1, the delta_one_counter becomes 0. We
-                # do not use the delta_one_counter for now, but it can be
-                # used to customise when to add auxiliary loss
-                delta_one_counter += 1
+        if new_delta == 1.0:
+            # The first time where new_delta_val becomes 1, the network
+            # isn't train with delta being 1 for that epoch. So
+            # delta_one_counter starts with -1, and when new_delta_val
+            # is first time being 1, the delta_one_counter becomes 0. We
+            # do not use the delta_one_counter for now, but it can be
+            # used to customise when to add auxiliary loss
+            delta_one_counter += 1
 
         # Log average performance for train
         avg_loss = train_loss_meters["overall_loss"].get_average()

@@ -6,8 +6,6 @@ from typing import Any
 import torch
 from torch.utils.data import DataLoader
 
-from neural_dnf.neural_dnf import BaseNeuralDNF
-
 file = Path(__file__).resolve()
 parent, root = file.parent.parent, file.parent.parents[1]
 sys.path.append(str(root))

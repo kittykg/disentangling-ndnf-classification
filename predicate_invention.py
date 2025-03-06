@@ -17,6 +17,8 @@ from torch import nn, Tensor
 
 
 class NeuralDNFPredicateInventor(nn.Module):
+    num_features: int
+    invented_predicate_per_input: int
     predicate_inventor: nn.Parameter
     tau: float
 
@@ -27,12 +29,12 @@ class NeuralDNFPredicateInventor(nn.Module):
         tau: float = 1.0,
     ):
         super().__init__()
-
+        self.num_features = num_features
+        self.invented_predicate_per_input = invented_predicate_per_input
         self.predicate_inventor = nn.Parameter(
             torch.empty(num_features, invented_predicate_per_input)
         )
         nn.init.normal_(self.predicate_inventor)
-
         self.tau = tau
 
     def forward(self, x: Tensor, discretised: bool = False) -> Tensor:
@@ -44,6 +46,15 @@ class NeuralDNFPredicateInventor(nn.Module):
         if discretised:
             x = torch.sign(x)
         return x
+
+    def extra_repr(self) -> str:
+        return ", ".join(
+            [
+                f"num_features={self.num_features}",
+                f"invented_predicate_per_input={self.invented_predicate_per_input}",
+                f"current_tau={self.tau:.2f}",
+            ]
+        )
 
 
 class PredicateInventorTauScheduler:

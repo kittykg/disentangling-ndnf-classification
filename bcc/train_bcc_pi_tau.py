@@ -130,7 +130,7 @@ def train_fold(
         delta_decay_rate=training_cfg["dds"]["delta_decay_rate"],
         target_module_type=model.ndnf.__class__.__name__,
     )
-    model.ndnf.set_delta_val(0.1)
+    model.ndnf.set_delta_val(training_cfg["dds"]["initial_delta"])
     delta_one_counter = 0
 
     tau_scheduler = DelayedExpontentialTauDecayScheduler(
@@ -206,7 +206,6 @@ def train_fold(
 
         # Update tau value
         tau_dict = tau_scheduler.step(model.predicate_inventor)
-        new_tau = tau_dict["new_tau"]
         old_tau = tau_dict["old_tau"]
 
         if new_delta == 1.0:
