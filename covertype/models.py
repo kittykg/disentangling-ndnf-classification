@@ -173,6 +173,7 @@ class CoverTypeNeuralDNFEO(CoverTypeBaseNeuralDNF):
     ) -> Tensor:
         # x: B x 44
         x = self.get_invented_predicates(x, discretise_invented_predicate)
+        # x: B x (4 * IP + 40)
         return self.ndnf.get_plain_output(x)
 
     def to_ndnf_model(self) -> CoverTypeNeuralDNF:

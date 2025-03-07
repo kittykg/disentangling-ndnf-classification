@@ -303,9 +303,8 @@ def _train(
                 epoch_val_loss_meter.update(loss.item())
                 epoch_val_acc_meter.update(y_hat, y)
                 if isinstance(model, CoverTypeNeuralDNFEO):
-                    y_hat = model.get_pre_eo_output(x)
-                    y_hat = (torch.tanh(y_hat) > 0).long()
-                    epoch_val_jacc_meter.update(y_hat, y)
+                    y_hat_prime = model.get_pre_eo_output(x)
+                    y_hat_prime = (torch.tanh(y_hat) > 0).long()
                 else:
                     y_hat_prime = torch.zeros(
                         len(y), COVERTYPE_NUM_CLASSES
@@ -313,7 +312,7 @@ def _train(
                     y_hat_prime[
                         range(len(y)), torch.argmax(y_hat, dim=1).long()
                     ] = 1
-                    epoch_val_jacc_meter.update(y_hat_prime, y)
+                epoch_val_jacc_meter.update(y_hat_prime, y)
 
         val_avg_loss = epoch_val_loss_meter.get_average()
         val_avg_acc = epoch_val_acc_meter.get_average()
