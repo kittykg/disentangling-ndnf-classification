@@ -101,6 +101,7 @@ def _train(
 
     # Delta delay scheduler if using NeuralDNFEO
     if isinstance(model, CarNeuralDNFEO):
+        step_at_epoch_end = training_cfg["dds"].get("step_at_epoch_end", False)
         dds = DeltaDelayedExponentialDecayScheduler(
             initial_delta=training_cfg["dds"]["initial_delta"],
             delta_decay_delay=training_cfg["dds"]["delta_decay_delay"],
@@ -191,7 +192,19 @@ def _train(
                 ] = 1
                 train_jacc_meter.update(y_hat_prime, y)
 
-        if isinstance(model, CarNeuralDNFEO):
+            if isinstance(model, CarNeuralDNFEO) and not step_at_epoch_end:
+                # We found that stepping DDS (to update delta value) at each
+                # training step performs better than stepping at the end of each
+                # epoch. For this dataset we support stepping at each training
+                # step, but it is not guaranteed to work for all datasets.
+                delta_dict = dds.step(model.ndnf)
+                new_delta = delta_dict["new_delta_vals"][0]
+                old_delta = delta_dict["old_delta_vals"][0]
+
+                if new_delta == 1.0:
+                    delta_one_counter += 1
+
+        if isinstance(model, CarNeuralDNFEO) and step_at_epoch_end:
             # Update delta value
             delta_dict = dds.step(model.ndnf)
             new_delta = delta_dict["new_delta_vals"][0]
