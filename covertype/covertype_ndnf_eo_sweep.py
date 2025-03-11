@@ -65,6 +65,7 @@ def train_wrapper(cfg: DictConfig):
         "optimiser_weight_decay"
     ] = wandb.config.optimiser_weight_decay
     cfg["training"]["scheduler_step"] = int(wandb.config.scheduler_step)
+    cfg["training"]["batch_size"] = wandb.config.batch_size
 
     # OVerride delta and tau scheduler parameters
     cfg["training"]["dds"]["delta_decay_rate"] = wandb.config.delta_decay_rate

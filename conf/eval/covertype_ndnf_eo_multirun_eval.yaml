@@ -1,0 +1,15 @@
+experiment_name: covertype_ndnf_eo_pi16_nc128_b32_e200
+multirun_seeds: [6766]
+
+use_cuda: True
+use_mps: False
+
+val_size: 0.15
+
+model_type: eo
+model_architecture:
+  invented_predicate_per_input: 16
+  n_conjunctions: 128
+
+discretisation_method: threshold # 'threshold' or 'disentangle'
+storage_dir: ??? # overwrite this

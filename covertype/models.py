@@ -136,7 +136,7 @@ class CoverTypeBaseNeuralDNF(CoverTypeClassifier):
 
 class CoverTypeNeuralDNF(CoverTypeBaseNeuralDNF):
     """
-    This class is not expected to be trained directely
+    This class is not expected to be trained directly
     """
 
     ndnf: NeuralDNF
