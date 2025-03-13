@@ -46,6 +46,8 @@ from covertype.data_utils_covertype import (
 from covertype.models import (
     COVERTYPE_NUM_CLASSES,
     CoverTypeClassifier,
+    CoverTypeBaseNeuralDNF,
+    CoverTypeNeuralDNFMT,
     CoverTypeNeuralDNFEO,
     construct_model,
 )
@@ -61,6 +63,7 @@ def loss_calculation(
     model: CoverTypeClassifier,
     conj_out: Tensor | None = None,
     invented_predicates: Tensor | None = None,
+    all_forms_dict: dict[str, dict[str, Tensor]] | None = None,
 ) -> dict[str, Tensor]:
     loss_dict = {
         "base_loss": criterion(y_hat, y),
@@ -74,6 +77,19 @@ def loss_calculation(
         loss_dict["invented_predicates_reg_loss"] = (
             1 - invented_predicates.abs()
         ).mean()
+
+    if all_forms_dict is not None:
+        # MT regularisation loss: push the mutex-tanh activation and the tanh
+        # activation to be the same
+        disj_mt = all_forms_dict["disjunction"]["mutex_tanh"]
+        disj_tanh = all_forms_dict["disjunction"]["tanh"]
+
+        p_k = (disj_mt + 1) / 2
+        p_k_hat = (disj_tanh + 1) / 2
+        loss_dict["mt_reg_loss"] = -torch.sum(
+            p_k * torch.log(p_k_hat + 1e-8)
+            + (1 - p_k) * torch.log(1 - p_k_hat + 1e-8)
+        )
 
     return loss_dict
 
@@ -105,8 +121,8 @@ def _train(
     # Loss function
     criterion = nn.CrossEntropyLoss()
 
-    if isinstance(model, CoverTypeNeuralDNFEO):
-        # Delta and tau delay scheduler if using NeuralDNFEO
+    if isinstance(model, CoverTypeBaseNeuralDNF):
+        # Delta and tau delay scheduler if using NeuralDNF based model
         dds = DeltaDelayedExponentialDecayScheduler(
             initial_delta=training_cfg["dds"]["initial_delta"],
             delta_decay_delay=training_cfg["dds"]["delta_decay_delay"],
@@ -135,13 +151,15 @@ def _train(
         "base_loss": MetricValueMeter("base_loss_meter"),
         "weight_reg_loss": MetricValueMeter("weight_reg_loss_meter"),
     }
-    if isinstance(model, CoverTypeNeuralDNFEO):
+    if isinstance(model, CoverTypeBaseNeuralDNF):
         train_loss_meters["conj_reg_loss"] = MetricValueMeter(
             "conj_reg_loss_meter"
         )
         train_loss_meters["invented_predicates_reg_loss"] = MetricValueMeter(
             "invented_predicates_reg_loss_meter"
         )
+    if isinstance(model, CoverTypeNeuralDNFMT):
+        train_loss_meters["mt_reg_loss"] = MetricValueMeter("mt_reg_loss_meter")
 
     train_acc_meter = AccuracyMeter()
     train_jacc_meter = JaccardScoreMeter()
@@ -163,17 +181,25 @@ def _train(
             optimiser.zero_grad()
 
             x, y = get_x_and_y_covertype(
-                data, device, use_ndnf=isinstance(model, CoverTypeNeuralDNFEO)
+                data, device, use_ndnf=isinstance(model, CoverTypeBaseNeuralDNF)
             )
             y_hat = model(x)
-            conj_out, invented_predicates = None, None
+            conj_out, invented_predicates, all_forms_dict = None, None, None
 
-            if isinstance(model, CoverTypeNeuralDNFEO):
+            if isinstance(model, CoverTypeBaseNeuralDNF):
                 conj_out = model.get_conjunction(x)
                 invented_predicates = model.get_invented_predicates(x)
+            if isinstance(model, CoverTypeNeuralDNFMT):
+                all_forms_dict = model.get_all_forms(x)
 
             loss_dict = loss_calculation(
-                criterion, y_hat, y, model, conj_out, invented_predicates
+                criterion,
+                y_hat,
+                y,
+                model,
+                conj_out,
+                invented_predicates,
+                all_forms_dict,
             )
 
             loss = (
@@ -181,12 +207,17 @@ def _train(
                 + training_cfg["aux_loss"]["weight_l1_mod_lambda"]
                 * loss_dict["weight_reg_loss"]
             )
-            if isinstance(model, CoverTypeNeuralDNFEO):
+            if isinstance(model, CoverTypeBaseNeuralDNF):
                 loss += (
                     training_cfg["aux_loss"]["tanh_conj_lambda"]
                     * loss_dict["conj_reg_loss"]
                     + training_cfg["aux_loss"]["pi_lambda"]
                     * loss_dict["invented_predicates_reg_loss"]
+                )
+            if isinstance(model, CoverTypeNeuralDNFMT):
+                loss += (
+                    training_cfg["aux_loss"]["mt_reg_lambda"]
+                    * loss_dict["mt_reg_loss"]
                 )
 
             loss.backward()
@@ -198,15 +229,21 @@ def _train(
             train_loss_meters["overall_loss"].update(loss.item())
             train_acc_meter.update(y_hat, y)
 
+            # Update jacc meter
             if isinstance(model, CoverTypeNeuralDNFEO):
                 # NeuralDNFEO
-                # Update jacc meter
                 with torch.no_grad():
                     y_hat_prime = model.get_pre_eo_output(x)
                     y_hat_prime = (torch.tanh(y_hat_prime) > 0).long()
+            elif isinstance(model, CoverTypeNeuralDNFMT):
+                # NeuralDNFMT
+                assert all_forms_dict is not None
+                with torch.no_grad():
+                    y_hat_prime = (
+                        all_forms_dict["disjunction"]["tanh"] > 0
+                    ).long()
             else:
                 # MLP
-                # Update jacc meters
                 # convert the max value to the class
                 y_hat_prime = torch.zeros(len(y), COVERTYPE_NUM_CLASSES).long()
                 y_hat_prime[
@@ -214,7 +251,7 @@ def _train(
                 ] = 1
             train_jacc_meter.update(y_hat_prime, y)
 
-        if isinstance(model, CoverTypeNeuralDNFEO):
+        if isinstance(model, CoverTypeBaseNeuralDNF):
             # Update delta value
             delta_dict = dds.step(model.ndnf)
             new_delta = delta_dict["new_delta_vals"][0]
@@ -242,7 +279,7 @@ def _train(
         assert isinstance(avg_macro_jacc, float)
 
         if epoch % log_interval == 0:
-            if isinstance(model, CoverTypeNeuralDNFEO):
+            if isinstance(model, CoverTypeBaseNeuralDNF):
                 log_info_str = (
                     f"  [{epoch + 1:3d}] Train  Delta: {old_delta:.3f}  "
                     f"Tau: {old_tau:.3f}  avg loss: {avg_loss:.3f}  "
@@ -273,17 +310,25 @@ def _train(
                 x, y = get_x_and_y_covertype(
                     data,
                     device,
-                    use_ndnf=isinstance(model, CoverTypeNeuralDNFEO),
+                    use_ndnf=isinstance(model, CoverTypeBaseNeuralDNF),
                 )
 
                 y_hat = model(x)
-                conj_out, invented_predicates = None, None
-                if isinstance(model, CoverTypeNeuralDNFEO):
+                conj_out, invented_predicates, all_forms_dict = None, None, None
+                if isinstance(model, CoverTypeBaseNeuralDNF):
                     conj_out = model.get_conjunction(x)
                     invented_predicates = model.get_invented_predicates(x)
+                if isinstance(model, CoverTypeNeuralDNFMT):
+                    all_forms_dict = model.get_all_forms(x)
 
                 loss_dict = loss_calculation(
-                    criterion, y_hat, y, model, conj_out, invented_predicates
+                    criterion,
+                    y_hat,
+                    y,
+                    model,
+                    conj_out,
+                    invented_predicates,
+                    all_forms_dict,
                 )
 
                 loss = (
@@ -291,12 +336,17 @@ def _train(
                     + training_cfg["aux_loss"]["weight_l1_mod_lambda"]
                     * loss_dict["weight_reg_loss"]
                 )
-                if isinstance(model, CoverTypeNeuralDNFEO):
+                if isinstance(model, CoverTypeBaseNeuralDNF):
                     loss += (
                         training_cfg["aux_loss"]["tanh_conj_lambda"]
                         * loss_dict["conj_reg_loss"]
                         + training_cfg["aux_loss"]["pi_lambda"]
                         * loss_dict["invented_predicates_reg_loss"]
+                    )
+                if isinstance(model, CoverTypeNeuralDNFMT):
+                    loss += (
+                        training_cfg["aux_loss"]["mt_reg_lambda"]
+                        * loss_dict["mt_reg_loss"]
                     )
 
                 # Update meters
@@ -305,6 +355,12 @@ def _train(
                 if isinstance(model, CoverTypeNeuralDNFEO):
                     y_hat_prime = model.get_pre_eo_output(x)
                     y_hat_prime = (torch.tanh(y_hat) > 0).long()
+                elif isinstance(model, CoverTypeNeuralDNFMT):
+                    assert all_forms_dict is not None
+                    with torch.no_grad():
+                        y_hat_prime = (
+                            all_forms_dict["disjunction"]["tanh"] > 0
+                        ).long()
                 else:
                     y_hat_prime = torch.zeros(
                         len(y), COVERTYPE_NUM_CLASSES
@@ -348,14 +404,14 @@ def _train(
                 "val/sample_jaccard": val_sample_jaccard,
                 "val/macro_jaccard": val_macro_jaccard,
             }
-            if isinstance(model, CoverTypeNeuralDNFEO):
+            if isinstance(model, CoverTypeBaseNeuralDNF):
                 wandb_log_dict["train/delta"] = old_delta
                 wandb_log_dict["train/tau"] = old_tau
             for key, meter in train_loss_meters.items():
                 if key == "overall_loss":
                     continue
                 wandb_log_dict[f"train/{key}"] = meter.get_average()
-            if gen_weight_hist and isinstance(model, CoverTypeNeuralDNFEO):
+            if gen_weight_hist and isinstance(model, CoverTypeBaseNeuralDNF):
                 # Generate weight histogram
                 f1, f2 = generate_weight_histogram(model.ndnf)
                 wandb_log_dict["conj_w_hist"] = wandb.Image(f1)
@@ -446,14 +502,14 @@ def train(cfg: DictConfig, run_dir: Path) -> dict[str, float]:
 
     _train(training_cfg, model, train_loader, val_loader, device, use_wandb)
 
-    if isinstance(model, CoverTypeNeuralDNFEO):
+    if isinstance(model, CoverTypeBaseNeuralDNF):
         model.ndnf.set_delta_val(1.0)
 
     model_path = run_dir / "model.pth"
     torch.save(model.state_dict(), model_path)
 
     eval_model = model
-    if isinstance(model, CoverTypeNeuralDNFEO):
+    if isinstance(model, (CoverTypeNeuralDNFEO, CoverTypeNeuralDNFMT)):
         eval_model = model.to_ndnf_model()
     eval_model.to(device)
     eval_model.eval()

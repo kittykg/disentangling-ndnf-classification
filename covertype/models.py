@@ -210,11 +210,16 @@ class CoverTypeNeuralDNFMT(CoverTypeBaseNeuralDNF):
             delta=1.0,
         )
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(
+        self, x: Tensor, discretise_invented_predicate: bool = False
+    ) -> Tensor:
         """
         Returns the raw logits of the model. This is useful for training with
         CrossEntropyLoss.
         """
+        # x: B x 44
+        x = self.get_invented_predicates(x, discretise_invented_predicate)
+        # x: B x (4 * IP + 40)
         return self.ndnf.get_raw_output(x)
 
     def get_all_forms(
