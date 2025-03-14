@@ -1,32 +1,34 @@
-experiment_name: covertype_ndnf_eo_pi16_nc256_b4096_e200
+experiment_name: covertype_ndnf_eo_pi16_nc128_b128_e200
 seed: null
 
 use_cuda: True
 use_mps: False
 
-log_interval: 10
+log_interval: 20
 
-val_size: 0.15
+val_size: 0.3
+val_seed: 73
+
 use_weighted_sampler: False
 
 model_type: eo
 model_architecture:
   invented_predicate_per_input: 16
-  n_conjunctions: 256
+  n_conjunctions: 128
 
 optimiser: adam
 optimiser_lr: 0.001
 optimiser_weight_decay: 0.0001
 scheduler_step: 50
-batch_size: 4096
+batch_size: 128
 loader_num_workers: 4
 epochs: 200
 
 dds:
   initial_delta: 0.1
-  delta_decay_delay: 1
+  delta_decay_delay: 5
   delta_decay_steps: 1
-  delta_decay_rate: 1.2
+  delta_decay_rate: 1.1
 
 pi_tau:
   initial_tau: 1

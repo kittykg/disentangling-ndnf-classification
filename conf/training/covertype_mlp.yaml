@@ -1,4 +1,4 @@
-experiment_name: covertype_mlp_l128_b256_e100
+experiment_name: covertype_mlp_l128_b128_e100
 seed: null
 
 use_cuda: True
@@ -6,7 +6,8 @@ use_mps: False
 
 log_interval: 20
 
-val_size: 0.15
+val_size: 0.3
+val_seed: 73
 
 model_type: mlp
 model_architecture:
@@ -16,7 +17,7 @@ optimiser: adam
 optimiser_lr: 0.001
 optimiser_weight_decay: 0.00004
 scheduler_step: 10
-batch_size: 256
+batch_size: 128
 loader_num_workers: 0
 epochs: 100
 

@@ -454,7 +454,7 @@ def train(cfg: DictConfig, run_dir: Path) -> dict[str, float]:
         X,
         y,
         test_size=training_cfg.get("val_size", 0.2),
-        random_state=training_cfg["seed"],
+        random_state=training_cfg.get("val_seed", 73),
     )
     train_dataset = CoverTypeDataset(X_train, y_train)
     val_dataset = CoverTypeDataset(X_val, y_val)
