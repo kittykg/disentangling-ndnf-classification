@@ -430,7 +430,9 @@ def _train(
     }
 
 
-def train(cfg: DictConfig, run_dir: Path) -> dict[str, float]:
+def train(
+    cfg: DictConfig, run_dir: Path, is_sweep: bool = False
+) -> dict[str, float]:
     training_cfg = cfg["training"]
     use_wandb = cfg["wandb"]["use_wandb"]
 
@@ -513,8 +515,10 @@ def train(cfg: DictConfig, run_dir: Path) -> dict[str, float]:
         eval_model = model.to_ndnf_model()
     eval_model.to(device)
     eval_model.eval()
+
+    final_test_loader = val_loader if is_sweep else test_loader
     test_eval_raw_dict = covertype_classifier_eval(
-        eval_model, device, test_loader
+        eval_model, device, final_test_loader
     )
     test_eval_result = parse_eval_return_meters_with_logging(
         test_eval_raw_dict,

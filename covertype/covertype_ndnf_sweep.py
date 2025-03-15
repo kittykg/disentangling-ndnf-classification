@@ -45,7 +45,7 @@ def train_wrapper(cfg: DictConfig):
 
     use_ndnf = "ndnf" in cfg["training"]["experiment_name"]
     assert use_ndnf, "Must be NDNF based experiment"
-    assert cfg["training"]["model_type"] == "eo", "Must be EO model"
+    assert cfg["training"]["model_type"] in ["eo", "mt"]
 
     full_experiment_name = (
         f"{cfg['training']['experiment_name']}_{seed}_{int(ts)}"
@@ -67,9 +67,21 @@ def train_wrapper(cfg: DictConfig):
     cfg["training"]["scheduler_step"] = int(wandb.config.scheduler_step)
     cfg["training"]["batch_size"] = wandb.config.batch_size
 
-    # OVerride delta and tau scheduler parameters
+    # Override delta and tau scheduler parameters
     cfg["training"]["dds"]["delta_decay_rate"] = wandb.config.delta_decay_rate
+    cfg["training"]["dds"]["delta_decay_steps"] = int(
+        wandb.config.delta_decay_steps
+    )
+    cfg["training"]["dds"]["delta_decay_delay"] = int(
+        wandb.config.delta_decay_delay
+    )
     cfg["training"]["pi_tau"]["tau_decay_rate"] = wandb.config.tau_decay_rate
+    cfg["training"]["pi_tau"]["tau_decay_steps"] = int(
+        wandb.config.tau_decay_steps
+    )
+    cfg["training"]["pi_tau"]["tau_decay_delay"] = int(
+        wandb.config.tau_decay_delay
+    )
 
     # Override the lambda parameters
     cfg["training"]["aux_loss"][
@@ -79,17 +91,21 @@ def train_wrapper(cfg: DictConfig):
         "tanh_conj_lambda"
     ] = wandb.config.tanh_conj_lambda
     cfg["training"]["aux_loss"]["pi_lambda"] = wandb.config.pi_lambda
+    if cfg["training"]["model_type"] == "mt":
+        cfg["training"]["aux_loss"][
+            "mt_reg_lambda"
+        ] = wandb.config.mt_reg_lambda
 
     use_discord_webhook = cfg["webhook"]["use_discord_webhook"]
     msg_body = None
     errored = False
 
     try:
-        test_eval_result = train(cfg, Path(HydraConfig.get().run.dir))
+        eval_result = train(cfg, Path(HydraConfig.get().run.dir), is_sweep=True)
         combined_metric = (
-            test_eval_result["sample_jaccard"]
-            + test_eval_result["accuracy"]
-            + test_eval_result["macro_jaccard"]
+            eval_result["sample_jaccard"]
+            + eval_result["accuracy"]
+            + eval_result["macro_jaccard"]
         )
         wandb.log({"combined_metric": combined_metric})
 
