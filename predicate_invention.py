@@ -103,7 +103,7 @@ class PredicateInventorTauScheduler:
         self.internal_step_counter = 0
 
 
-class DelayedExpontentialTauDecayScheduler(PredicateInventorTauScheduler):
+class DelayedExponentialTauDecayScheduler(PredicateInventorTauScheduler):
     def _calculate_new_tau(self, step: int) -> float:
         if step < self.tau_decay_delay:
             return self.initial_tau

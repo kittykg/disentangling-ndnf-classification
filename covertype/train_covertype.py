@@ -31,7 +31,7 @@ from analysis import (
     AccuracyMeter,
     JaccardScoreMeter,
 )
-from predicate_invention import DelayedExpontentialTauDecayScheduler
+from predicate_invention import DelayedExponentialTauDecayScheduler
 from utils import post_to_discord_webhook, generate_weight_histogram
 
 from covertype.eval.eval_common import (
@@ -133,7 +133,7 @@ def _train(
         model.ndnf.set_delta_val(training_cfg["dds"]["initial_delta"])
         delta_one_counter = 0
 
-        tau_scheduler = DelayedExpontentialTauDecayScheduler(
+        tau_scheduler = DelayedExponentialTauDecayScheduler(
             initial_tau=training_cfg["pi_tau"]["initial_tau"],
             tau_decay_delay=training_cfg["pi_tau"]["tau_decay_delay"],
             tau_decay_steps=training_cfg["pi_tau"]["tau_decay_steps"],

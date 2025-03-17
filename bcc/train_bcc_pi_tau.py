@@ -33,7 +33,7 @@ except ValueError:  # Already removed
 
 from analysis import MetricValueMeter, AccuracyMeter, collate, synthesize
 from data_utils import GenericUCIDataset
-from predicate_invention import DelayedExpontentialTauDecayScheduler
+from predicate_invention import DelayedExponentialTauDecayScheduler
 from utils import post_to_discord_webhook, generate_weight_histogram
 
 from bcc.data_utils_bcc import get_bcc_data
@@ -133,7 +133,7 @@ def train_fold(
     model.ndnf.set_delta_val(training_cfg["dds"]["initial_delta"])
     delta_one_counter = 0
 
-    tau_scheduler = DelayedExpontentialTauDecayScheduler(
+    tau_scheduler = DelayedExponentialTauDecayScheduler(
         initial_tau=training_cfg["pi_tau"]["initial_tau"],
         tau_decay_delay=training_cfg["pi_tau"]["tau_decay_delay"],
         tau_decay_steps=training_cfg["pi_tau"]["tau_decay_steps"],
