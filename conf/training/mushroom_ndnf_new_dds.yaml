@@ -1,0 +1,34 @@
+experiment_name: mushroom_ndnf_nc32_b64_dds_linear_e500
+seed: null
+
+use_cuda: True
+use_mps: False
+
+log_interval: 100
+
+val_size: 0.15
+val_seed: 73
+
+model_type: ndnf
+model_architecture:
+  n_conjunctions: 32
+
+optimiser: adam
+optimiser_lr: 0.001
+optimiser_weight_decay: 0.0001
+scheduler_step: 113
+loss_func: bce
+batch_size: 64
+loader_num_workers: 0
+epochs: 500
+
+dds:
+  type: linear
+  initial_delta: 0.1
+  delta_decay_delay: 5
+  delta_decay_steps: 10
+  delta_decay_rate: 0.05
+
+aux_loss:
+  weight_l1_mod_lambda: 1e-7
+  tanh_conj_lambda: 1e-12

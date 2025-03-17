@@ -84,7 +84,9 @@ def train_wrapper(cfg: DictConfig):
     errored = False
 
     try:
-        test_eval_result = train(cfg, Path(HydraConfig.get().run.dir))
+        test_eval_result = train(
+            cfg, Path(HydraConfig.get().run.dir), is_sweep=True
+        )
         combined_metric = test_eval_result["mcc"] + test_eval_result["accuracy"]
         wandb.log({"combined_metric": combined_metric})
 
