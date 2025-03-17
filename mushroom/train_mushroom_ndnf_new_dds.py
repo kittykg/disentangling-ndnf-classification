@@ -16,9 +16,11 @@ from torch.utils.data import DataLoader
 import wandb
 
 from neural_dnf.utils import (
+    DeltaDelayedDecayScheduler,  # base DDS class
     DeltaDelayedExponentialDecayScheduler,
     DeltaDelayedLinearDecayScheduler,
     DeltaDelayedMonotonicFunctionScheduler,
+    DeltaDelayedMonitoringDecayScheduler,  # monitoring base DDS class
     DeltaDelayedMonitoringExponentialDecayScheduler,
     DeltaDelayedMonitoringLinearDecayScheduler,
 )
@@ -113,7 +115,12 @@ def _train(
         "delta_decay_rate": training_cfg["dds"]["delta_decay_rate"],
         "target_module_type": model.ndnf.__class__.__name__,
     }
-    dds = dds_type(**dds_params)
+    if training_cfg["dds"]["type"].startswith("monitoring"):
+        dds_params["performance_offset"] = training_cfg["dds"].get(
+            "performance_offset", 1e-2
+        )
+
+    dds: DeltaDelayedDecayScheduler = dds_type(**dds_params)
     model.ndnf.set_delta_val(training_cfg["dds"]["initial_delta"])
     delta_one_counter = 0
 
@@ -176,8 +183,15 @@ def _train(
             train_loss_meters["overall_loss"].update(loss.item())
             train_acc_meter.update(y_hat, y)
 
+        # Log average performance for train
+        avg_loss = train_loss_meters["overall_loss"].get_average()
+        avg_acc = train_acc_meter.get_average()
+
         # Update delta value
-        delta_dict = dds.step(model.ndnf)
+        if not isinstance(dds, DeltaDelayedMonitoringDecayScheduler):
+            delta_dict = dds.step(model.ndnf)
+        else:
+            delta_dict = dds.step(model.ndnf, avg_acc)
         new_delta = delta_dict["new_delta_vals"][0]
         old_delta = delta_dict["old_delta_vals"][0]
 
@@ -189,10 +203,6 @@ def _train(
             # We do not use the delta_one_counter for now, but it can be used
             # to customise when to add auxiliary loss
             delta_one_counter += 1
-
-        # Log average performance for train
-        avg_loss = train_loss_meters["overall_loss"].get_average()
-        avg_acc = train_acc_meter.get_average()
 
         if epoch % log_interval == 0:
             log.info(

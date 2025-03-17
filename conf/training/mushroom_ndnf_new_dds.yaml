@@ -1,4 +1,4 @@
-experiment_name: mushroom_ndnf_nc32_b64_dds_linear_e500
+experiment_name: mushroom_ndnf_nc32_b64_dds_mon_linear_e500
 seed: null
 
 use_cuda: True
@@ -23,11 +23,12 @@ loader_num_workers: 0
 epochs: 500
 
 dds:
-  type: linear
+  type: monitoring_linear
   initial_delta: 0.1
   delta_decay_delay: 5
-  delta_decay_steps: 10
+  delta_decay_steps: 10 # this will be ignored for monitoring based dds
   delta_decay_rate: 0.05
+  performance_offset: 1e-2  # used for monitoring based dds
 
 aux_loss:
   weight_l1_mod_lambda: 1e-7
