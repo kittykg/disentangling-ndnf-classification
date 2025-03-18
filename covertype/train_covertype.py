@@ -52,7 +52,7 @@ from covertype.models import (
     construct_model,
 )
 
-
+NON_TRAIN_LOADER_BATCH_SIZE = 4096
 log = logging.getLogger()
 
 
@@ -486,13 +486,13 @@ def train(
     )
     val_loader = DataLoader(
         val_dataset,
-        batch_size=training_cfg["batch_size"],
+        batch_size=NON_TRAIN_LOADER_BATCH_SIZE,
         num_workers=training_cfg.get("loader_num_workers", 0),
         pin_memory=device == torch.device("cuda"),
     )
     test_loader = DataLoader(
         test_dataset,
-        batch_size=training_cfg["batch_size"],
+        batch_size=NON_TRAIN_LOADER_BATCH_SIZE,
         num_workers=training_cfg.get("loader_num_workers", 0),
         pin_memory=device == torch.device("cuda"),
     )

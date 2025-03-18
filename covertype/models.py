@@ -36,9 +36,9 @@ class CoverTypeMLP(CoverTypeClassifier):
 
         self.mlp = nn.Sequential(
             nn.Linear(COVERTYPE_TOTAL_NUM_FEATURES, num_latent),
-            nn.ReLU(),
+            nn.Tanh(),
             nn.Linear(num_latent, num_latent),
-            nn.ReLU(),
+            nn.Tanh(),
             nn.Linear(num_latent, COVERTYPE_NUM_CLASSES),
         )
 
