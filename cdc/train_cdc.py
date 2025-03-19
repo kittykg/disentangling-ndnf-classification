@@ -437,6 +437,7 @@ def train(
         do_logging=True,
         metric_prefix="nipd/",
     )
+    test_eval_result = test_eval_result_nipd
     if isinstance(model, CDCNeuralDNF):
         test_eval_result_ipd = parse_eval_return_meters_with_logging(
             cdc_classifier_eval(model, device, final_test_loader, True),
