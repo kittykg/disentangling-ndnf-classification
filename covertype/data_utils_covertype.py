@@ -35,9 +35,17 @@ def get_covertype_data_np_from_path(
         "create_hold_out"
     ], "Hold out test data must be created"
 
-    file_name = (
-        "hold_out_test_covertype.npz" if is_test else "train_covertype.npz"
-    )
+    undersample = data_preprocess_cfg.get("undersample", False)
+    if undersample:
+        file_name = "covertype_undersampled.npz"
+    else:
+        file_name = f"covertype.npz"
+
+    if is_test:
+        file_name = f"hold_out_test_{file_name}"
+    else:
+        file_name = f"train_{file_name}"
+
     npz_path = Path(data_preprocess_cfg["save_dir"]) / file_name
     data = np.load(npz_path)
     return data["X"], data["y"]

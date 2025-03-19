@@ -6,6 +6,7 @@ import hydra
 from omegaconf import DictConfig
 import numpy as np
 import pandas as pd
+from imblearn.under_sampling import NearMiss
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from ucimlrepo import fetch_ucirepo, dotdict
@@ -35,6 +36,23 @@ def log_relevant_metadata(uci_dataset: dotdict) -> None:
     log.info(f"Dataset name: {uci_dataset.metadata.name}")  # type: ignore
     log.info(f"Number of instances: {uci_dataset.metadata.num_instances}")  # type: ignore
     log.info(f"Number of features: {uci_dataset.metadata.num_features}")  # type: ignore
+
+
+def get_undersampling_strategy(
+    X: np.ndarray,
+    y: np.ndarray,
+    nm_cfg: dict[str, Any] = {
+        "version": 1,
+        "n_neighbors": 10,
+    },
+) -> tuple[np.ndarray, np.ndarray]:
+    nm = NearMiss(**nm_cfg)
+    X_resampled, y_resampled = nm.fit_resample(X, y)  # type: ignore
+    log.info(
+        f"Undersampling using Near Miss: {nm_cfg}, "
+        f"original shape: {X.shape}, resampled shape: {X_resampled.shape}"
+    )
+    return X_resampled, y_resampled  # type: ignore
 
 
 def split_hold_out_data(
@@ -143,7 +161,7 @@ def preprocess_and_save(cfg: DictConfig) -> None:
     )
     log.info(f"Saved the processed dataset to {output_file_path}")
 
-    # Also save the unsclaed data
+    # Also save the unscaled data
     np.savez_compressed(
         Path(cfg["save_dir"]) / f"covertype_no_scaling.npz",
         X=ret_dict["X_no_scaling"],
@@ -164,6 +182,33 @@ def preprocess_and_save(cfg: DictConfig) -> None:
         var=scaler.var_,
     )
     log.info(f"Saved the scaler to {Path(cfg['save_dir']) / 'scaler.npz'}")
+
+    undersample = cfg.get("undersample", False)
+    if undersample:
+        log.info("===============================================")
+        log.info("Undersampling the dataset")
+        X_np, y_np = get_undersampling_strategy(
+            X_np,
+            y_np,
+            cfg.get(
+                "undersample_cfg",
+                {
+                    "version": 1,
+                    "n_neighbors": 10,
+                },
+            ),
+        )
+        file_name = "covertype_undersampled.npz"
+        log.info(f"Undersampled dataset: {np.bincount(y_np)}")
+
+        output_file_path = Path(cfg["save_dir"]) / file_name
+        np.savez_compressed(
+            output_file_path,
+            X=X_np,
+            y=y_np,
+            feature_names=feature_names,
+        )
+        log.info(f"Saved the undersampled dataset to {output_file_path}")
 
     # create hold out test set if needed
     if hold_out is not None:
