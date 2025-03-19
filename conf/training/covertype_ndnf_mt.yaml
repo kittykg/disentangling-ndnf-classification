@@ -1,4 +1,4 @@
-experiment_name: covertype_ndnf_mt_pi16_nc128_b128_e200
+experiment_name: covertype_ndnf_mt_pi16_nc128_b128_dds_mon_linear_e200
 seed: null
 
 use_cuda: True
@@ -25,10 +25,12 @@ loader_num_workers: 4
 epochs: 200
 
 dds:
+  type: monitoring_linear
   initial_delta: 0.1
-  delta_decay_delay: 1
-  delta_decay_steps: 1
-  delta_decay_rate: 1.1
+  delta_decay_delay: 5
+  delta_decay_steps: 2 # this will be ignored for monitoring based dds
+  delta_decay_rate: 0.05
+  performance_offset: 1e-2  # used for monitoring based dds
 
 pi_tau:
   initial_tau: 1

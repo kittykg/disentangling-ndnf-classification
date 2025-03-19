@@ -60,6 +60,7 @@ def train_wrapper(cfg: DictConfig):
     ] = wandb.config.n_conjunctions
 
     # Override training parameters
+    cfg["training"]["optimiser"] = wandb.config.optimiser
     cfg["training"]["optimiser_lr"] = wandb.config.optimiser_lr
     cfg["training"][
         "optimiser_weight_decay"
@@ -69,9 +70,11 @@ def train_wrapper(cfg: DictConfig):
 
     # Override delta and tau scheduler parameters
     cfg["training"]["dds"]["delta_decay_rate"] = wandb.config.delta_decay_rate
-    cfg["training"]["dds"]["delta_decay_steps"] = int(
-        wandb.config.delta_decay_steps
-    )
+    # If using monitoring based dds, decay steps is not used
+    if not cfg["training"]["dds"]["type"].startswith("monitoring"):
+        cfg["training"]["dds"]["delta_decay_steps"] = int(
+            wandb.config.delta_decay_steps
+        )
     cfg["training"]["dds"]["delta_decay_delay"] = int(
         wandb.config.delta_decay_delay
     )

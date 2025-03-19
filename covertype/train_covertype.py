@@ -15,7 +15,15 @@ from torch import Tensor, nn
 from torch.utils.data import DataLoader
 import wandb
 
-from neural_dnf.utils import DeltaDelayedExponentialDecayScheduler
+from neural_dnf.utils import (
+    DeltaDelayedDecayScheduler,  # base DDS class
+    DeltaDelayedExponentialDecayScheduler,
+    DeltaDelayedLinearDecayScheduler,
+    DeltaDelayedMonotonicFunctionScheduler,
+    DeltaDelayedMonitoringDecayScheduler,  # monitoring base DDS class
+    DeltaDelayedMonitoringExponentialDecayScheduler,
+    DeltaDelayedMonitoringLinearDecayScheduler,
+)
 
 file = Path(__file__).resolve()
 parent, root = file.parent, file.parents[1]
@@ -123,13 +131,26 @@ def _train(
 
     if isinstance(model, CoverTypeBaseNeuralDNF):
         # Delta and tau delay scheduler if using NeuralDNF based model
-        dds = DeltaDelayedExponentialDecayScheduler(
-            initial_delta=training_cfg["dds"]["initial_delta"],
-            delta_decay_delay=training_cfg["dds"]["delta_decay_delay"],
-            delta_decay_steps=training_cfg["dds"]["delta_decay_steps"],
-            delta_decay_rate=training_cfg["dds"]["delta_decay_rate"],
-            target_module_type=model.ndnf.__class__.__name__,
-        )
+        dds_type = {
+            "linear": DeltaDelayedLinearDecayScheduler,
+            "exponential": DeltaDelayedExponentialDecayScheduler,
+            "monotonic": DeltaDelayedMonotonicFunctionScheduler,
+            "monitoring_linear": DeltaDelayedMonitoringLinearDecayScheduler,
+            "monitoring_exponential": DeltaDelayedMonitoringExponentialDecayScheduler,
+        }[training_cfg["dds"]["type"]]
+        dds_params = {
+            "initial_delta": training_cfg["dds"]["initial_delta"],
+            "delta_decay_delay": training_cfg["dds"]["delta_decay_delay"],
+            "delta_decay_steps": training_cfg["dds"]["delta_decay_steps"],
+            "delta_decay_rate": training_cfg["dds"]["delta_decay_rate"],
+            "target_module_type": model.ndnf.__class__.__name__,
+        }
+        if training_cfg["dds"]["type"].startswith("monitoring"):
+            dds_params["performance_offset"] = training_cfg["dds"].get(
+                "performance_offset", 1e-2
+            )
+
+        dds: DeltaDelayedDecayScheduler = dds_type(**dds_params)
         model.ndnf.set_delta_val(training_cfg["dds"]["initial_delta"])
         delta_one_counter = 0
 
@@ -251,25 +272,6 @@ def _train(
                 ] = 1
             train_jacc_meter.update(y_hat_prime, y)
 
-        if isinstance(model, CoverTypeBaseNeuralDNF):
-            # Update delta value
-            delta_dict = dds.step(model.ndnf)
-            new_delta = delta_dict["new_delta_vals"][0]
-            old_delta = delta_dict["old_delta_vals"][0]
-
-            # Update tau value
-            tau_dict = tau_scheduler.step(model.predicate_inventor)
-            old_tau = tau_dict["old_tau"]
-
-            if new_delta == 1.0:
-                # The first time where new_delta_val becomes 1, the network
-                # isn't train with delta being 1 for that epoch. So
-                # delta_one_counter starts with -1, and when new_delta_val
-                # is first time being 1, the delta_one_counter becomes 0. We
-                # do not use the delta_one_counter for now, but it can be
-                # used to customise when to add auxiliary loss
-                delta_one_counter += 1
-
         # Log average performance for train
         avg_loss = train_loss_meters["overall_loss"].get_average()
         avg_acc = train_acc_meter.get_average()
@@ -281,8 +283,10 @@ def _train(
         if epoch % log_interval == 0:
             if isinstance(model, CoverTypeBaseNeuralDNF):
                 log_info_str = (
-                    f"  [{epoch + 1:3d}] Train  Delta: {old_delta:.3f}  "
-                    f"Tau: {old_tau:.3f}  avg loss: {avg_loss:.3f}  "
+                    f"  [{epoch + 1:3d}] "
+                    f"Train  Delta: {model.ndnf.get_delta_val()[0]:.3f}  "
+                    f"Tau: {model.predicate_inventor.tau:.3f}  "
+                    f"avg loss: {avg_loss:.3f}  "
                     f"avg acc: {avg_acc:.3f}  "
                     f"avg sample jacc: {avg_sample_jacc:.3f}  "
                     f"avg macro jacc: {avg_macro_jacc:.3f}"
@@ -385,9 +389,31 @@ def _train(
             )
 
         # -------------------------------------------------------------------- #
-        # 3. Let scheduler update optimiser at end of epoch
+        # 3. Schedulers step
         # -------------------------------------------------------------------- #
         scheduler.step()
+
+        if isinstance(model, CoverTypeBaseNeuralDNF):
+            # Update delta value
+            if not isinstance(dds, DeltaDelayedMonitoringDecayScheduler):
+                delta_dict = dds.step(model.ndnf)
+            else:
+                delta_dict = dds.step(model.ndnf, val_avg_acc)
+            new_delta = delta_dict["new_delta_vals"][0]
+            old_delta = delta_dict["old_delta_vals"][0]
+
+            # Update tau value
+            tau_dict = tau_scheduler.step(model.predicate_inventor)
+            old_tau = tau_dict["old_tau"]
+
+            if new_delta == 1.0:
+                # The first time where new_delta_val becomes 1, the network
+                # isn't train with delta being 1 for that epoch. So
+                # delta_one_counter starts with -1, and when new_delta_val
+                # is first time being 1, the delta_one_counter becomes 0. We
+                # do not use the delta_one_counter for now, but it can be
+                # used to customise when to add auxiliary loss
+                delta_one_counter += 1
 
         # -------------------------------------------------------------------- #
         # 4. (Optional) WandB logging
