@@ -1,2 +1,16 @@
 ucimlrepo_id: ???
 save_dir: ???
+
+# If the dataset is big enough, create hold out test set. If not, comment out
+# the following lines.
+hold_out:
+  create_hold_out: True
+  test_size: 0.2
+  random_state: 73
+  stratify: True
+
+# If the dataset is very imbalanced, create an under-sampled dataset.
+undersample: True
+# undersample_cfg:
+#   version: 1
+#   n_neighbors: 5
