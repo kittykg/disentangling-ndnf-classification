@@ -35,7 +35,7 @@ dds:
 
 pi_tau:
   initial_tau: 1
-  tau_decay_delay: 100
+  tau_decay_delay: 60
   tau_decay_steps: 1
   tau_decay_rate: 0.99
   min_tau: 0.1
@@ -43,4 +43,4 @@ pi_tau:
 aux_loss:
   weight_l1_mod_lambda: 1e-7
   tanh_conj_lambda: 1e-12
-  pi_lambda: 1e-5
+  pi_lambda: 1e-3

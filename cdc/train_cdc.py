@@ -437,13 +437,14 @@ def train(
         do_logging=True,
         metric_prefix="nipd/",
     )
-    test_eval_result_ipd = parse_eval_return_meters_with_logging(
-        cdc_classifier_eval(model, device, final_test_loader, True),
-        model_name="Model after training (Invented Predicate Discretisation)",
-        do_logging=True,
-        metric_prefix="ipd/",
-    )
-    test_eval_result = {**test_eval_result_nipd, **test_eval_result_ipd}
+    if isinstance(model, CDCNeuralDNF):
+        test_eval_result_ipd = parse_eval_return_meters_with_logging(
+            cdc_classifier_eval(model, device, final_test_loader, True),
+            model_name="Model after training (Invented Predicate Discretisation)",
+            do_logging=True,
+            metric_prefix="ipd/",
+        )
+        test_eval_result = {**test_eval_result_nipd, **test_eval_result_ipd}
 
     if use_wandb:
         wandb.log(test_eval_result)
