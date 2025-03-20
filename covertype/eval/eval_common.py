@@ -28,7 +28,7 @@ log = logging.getLogger()
 
 
 DEFAULT_GEN_SEED = 2
-DEFAULT_LOADER_BATCH_SIZE = 64
+DEFAULT_LOADER_BATCH_SIZE = 2**14
 DEFAULT_LOADER_NUM_WORKERS = 0
 
 AFTER_TRAIN_MODEL_BASE_NAME = "model"
@@ -58,6 +58,7 @@ def covertype_classifier_eval(
     model: CoverTypeClassifier,
     device: torch.device,
     data_loader: DataLoader,
+    discretise_invented_predicates: bool = True,
     do_logging: bool = False,
 ) -> dict[str, Meter]:
     model.eval()
@@ -72,7 +73,11 @@ def covertype_classifier_eval(
     for i, data in enumerate(data_loader):
         with torch.no_grad():
             x, y = get_x_and_y_covertype(data, device, use_ndnf=is_ndnf)
-            y_hat = model(x)
+
+            if is_ndnf:
+                y_hat = model(x, discretise_invented_predicates)
+            else:
+                y_hat = model(x)
 
         iter_acc_meter.update(y_hat, y)
         acc_meter.update(y_hat, y)
