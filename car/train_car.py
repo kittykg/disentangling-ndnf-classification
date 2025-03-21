@@ -15,7 +15,15 @@ from torch import Tensor, nn
 from torch.utils.data import DataLoader
 import wandb
 
-from neural_dnf.utils import DeltaDelayedExponentialDecayScheduler
+from neural_dnf.utils import (
+    DeltaDelayedDecayScheduler,  # base DDS class
+    DeltaDelayedExponentialDecayScheduler,
+    DeltaDelayedLinearDecayScheduler,
+    DeltaDelayedMonotonicFunctionScheduler,
+    DeltaDelayedMonitoringDecayScheduler,  # monitoring base DDS class
+    DeltaDelayedMonitoringExponentialDecayScheduler,
+    DeltaDelayedMonitoringLinearDecayScheduler,
+)
 
 file = Path(__file__).resolve()
 parent, root = file.parent, file.parents[1]
@@ -117,13 +125,27 @@ def _train(
 
     # Delta delay scheduler if using NeuralDNF based model
     if isinstance(model, CarBaseNeuralDNF):
-        dds = DeltaDelayedExponentialDecayScheduler(
-            initial_delta=training_cfg["dds"]["initial_delta"],
-            delta_decay_delay=training_cfg["dds"]["delta_decay_delay"],
-            delta_decay_steps=training_cfg["dds"]["delta_decay_steps"],
-            delta_decay_rate=training_cfg["dds"]["delta_decay_rate"],
-            target_module_type=model.ndnf.__class__.__name__,
-        )
+        # Delta and tau delay scheduler if using NeuralDNF based model
+        dds_type = {
+            "linear": DeltaDelayedLinearDecayScheduler,
+            "exponential": DeltaDelayedExponentialDecayScheduler,
+            "monotonic": DeltaDelayedMonotonicFunctionScheduler,
+            "monitoring_linear": DeltaDelayedMonitoringLinearDecayScheduler,
+            "monitoring_exponential": DeltaDelayedMonitoringExponentialDecayScheduler,
+        }[training_cfg["dds"]["type"]]
+        dds_params = {
+            "initial_delta": training_cfg["dds"]["initial_delta"],
+            "delta_decay_delay": training_cfg["dds"]["delta_decay_delay"],
+            "delta_decay_steps": training_cfg["dds"]["delta_decay_steps"],
+            "delta_decay_rate": training_cfg["dds"]["delta_decay_rate"],
+            "target_module_type": model.ndnf.__class__.__name__,
+        }
+        if training_cfg["dds"]["type"].startswith("monitoring"):
+            dds_params["performance_offset"] = training_cfg["dds"].get(
+                "performance_offset", 1e-2
+            )
+
+        dds: DeltaDelayedDecayScheduler = dds_type(**dds_params)
         model.ndnf.set_delta_val(training_cfg["dds"]["initial_delta"])
         delta_one_counter = 0
 
@@ -330,7 +352,10 @@ def _train(
 
         if isinstance(model, CarBaseNeuralDNF):
             # Update delta value
-            delta_dict = dds.step(model.ndnf)
+            if not isinstance(dds, DeltaDelayedMonitoringDecayScheduler):
+                delta_dict = dds.step(model.ndnf)
+            else:
+                delta_dict = dds.step(model.ndnf, val_avg_acc)
             new_delta = delta_dict["new_delta_vals"][0]
             old_delta = delta_dict["old_delta_vals"][0]
 

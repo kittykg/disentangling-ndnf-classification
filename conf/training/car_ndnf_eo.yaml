@@ -22,11 +22,11 @@ loader_num_workers: 0
 epochs: 500
 
 dds:
-  step_at_epoch_end: False
   # We found that stepping DDS (to update delta value) at each training step
   # performs better than stepping at the end of each epoch. For this dataset we
-  # support stepping at each training step, but it is not guaranteed to work for
-  # all datasets.
+  # support stepping at each training step (please use train_car_alt.py), but it
+  # is not guaranteed to work for all datasets.
+  # step_at_epoch_end: False
   initial_delta: 0.1
   delta_decay_delay: 5
   delta_decay_steps: 6
