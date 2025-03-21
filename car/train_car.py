@@ -45,11 +45,13 @@ from car.data_utils_car import (
 from car.models import (
     CAR_NUM_CLASSES,
     CarClassifier,
+    CarBaseNeuralDNF,
     CarNeuralDNFEO,
+    CarNeuralDNFMT,
     construct_model,
 )
 
-
+NON_TRAIN_LOADER_BATCH_SIZE = 512
 log = logging.getLogger()
 
 
@@ -59,6 +61,7 @@ def loss_calculation(
     y: Tensor,
     model: CarClassifier,
     conj_out: Tensor | None = None,
+    all_forms_dict: dict[str, dict[str, Tensor]] | None = None,
 ) -> dict[str, Tensor]:
     loss_dict = {
         "base_loss": criterion(y_hat, y),
@@ -68,6 +71,19 @@ def loss_calculation(
     if conj_out is not None:
         # Conjunction regularisation loss (push to ±1)
         loss_dict["conj_reg_loss"] = (1 - conj_out.abs()).mean()
+
+    if all_forms_dict is not None:
+        # MT regularisation loss:
+        # push the mutex-tanh activation and the tanh activation to be the same
+        disj_mt = all_forms_dict["disjunction"]["mutex_tanh"]
+        disj_tanh = all_forms_dict["disjunction"]["tanh"]
+
+        p_k = (disj_mt + 1) / 2
+        p_k_hat = (disj_tanh + 1) / 2
+        loss_dict["mt_reg_loss"] = -torch.sum(
+            p_k * torch.log(p_k_hat + 1e-8)
+            + (1 - p_k) * torch.log(1 - p_k_hat + 1e-8)
+        )
 
     return loss_dict
 
@@ -99,9 +115,8 @@ def _train(
     # Loss function
     criterion = nn.CrossEntropyLoss()
 
-    # Delta delay scheduler if using NeuralDNFEO
-    if isinstance(model, CarNeuralDNFEO):
-        step_at_epoch_end = training_cfg["dds"].get("step_at_epoch_end", False)
+    # Delta delay scheduler if using NeuralDNF based model
+    if isinstance(model, CarBaseNeuralDNF):
         dds = DeltaDelayedExponentialDecayScheduler(
             initial_delta=training_cfg["dds"]["initial_delta"],
             delta_decay_delay=training_cfg["dds"]["delta_decay_delay"],
@@ -122,10 +137,12 @@ def _train(
         "base_loss": MetricValueMeter("base_loss_meter"),
         "weight_reg_loss": MetricValueMeter("weight_reg_loss_meter"),
     }
-    if isinstance(model, CarNeuralDNFEO):
+    if isinstance(model, CarBaseNeuralDNF):
         train_loss_meters["conj_reg_loss"] = MetricValueMeter(
             "conj_reg_loss_meter"
         )
+    if isinstance(model, CarNeuralDNFMT):
+        train_loss_meters["mt_reg_loss"] = MetricValueMeter("mt_reg_loss_meter")
     train_acc_meter = AccuracyMeter()
     train_jacc_meter = JaccardScoreMeter()
     epoch_val_loss_meter = MetricValueMeter("val_loss_meter")
@@ -146,24 +163,33 @@ def _train(
             optimiser.zero_grad()
 
             x, y = get_x_and_y_car(
-                data, device, use_ndnf=isinstance(model, CarNeuralDNFEO)
+                data, device, use_ndnf=isinstance(model, CarBaseNeuralDNF)
             )
             y_hat = model(x)
-            conj_out = None
-            if isinstance(model, CarNeuralDNFEO):
+            conj_out, all_forms_dict = None, None
+            if isinstance(model, CarBaseNeuralDNF):
                 conj_out = model.get_conjunction(x)
+            if isinstance(model, CarNeuralDNFMT):
+                all_forms_dict = model.get_all_forms(x)
 
-            loss_dict = loss_calculation(criterion, y_hat, y, model, conj_out)
+            loss_dict = loss_calculation(
+                criterion, y_hat, y, model, conj_out, all_forms_dict
+            )
 
             loss = (
                 loss_dict["base_loss"]
                 + training_cfg["aux_loss"]["weight_l1_mod_lambda"]
                 * loss_dict["weight_reg_loss"]
             )
-            if isinstance(model, CarNeuralDNFEO):
+            if isinstance(model, CarBaseNeuralDNF):
                 loss += (
                     training_cfg["aux_loss"]["tanh_conj_lambda"]
                     * loss_dict["conj_reg_loss"]
+                )
+            if isinstance(model, CarNeuralDNFMT):
+                loss += (
+                    training_cfg["aux_loss"]["mt_reg_lambda"]
+                    * loss_dict["mt_reg_loss"]
                 )
 
             loss.backward()
@@ -175,49 +201,27 @@ def _train(
             train_loss_meters["overall_loss"].update(loss.item())
             train_acc_meter.update(y_hat, y)
 
+            # Update jacc meter
             if isinstance(model, CarNeuralDNFEO):
                 # NeuralDNFEO
-                # Update jacc meter
                 with torch.no_grad():
                     y_hat_prime = model.get_pre_eo_output(x)
                     y_hat_prime = (torch.tanh(y_hat_prime) > 0).long()
-                train_jacc_meter.update(y_hat_prime, y)
+            elif isinstance(model, CarNeuralDNFMT):
+                # NeuralDNFMT
+                assert all_forms_dict is not None
+                with torch.no_grad():
+                    y_hat_prime = (
+                        all_forms_dict["disjunction"]["tanh"] > 0
+                    ).long()
             else:
                 # MLP
-                # Update jacc meters
                 # convert the max value to the class
                 y_hat_prime = torch.zeros(len(y), CAR_NUM_CLASSES).long()
                 y_hat_prime[
                     range(len(y)), torch.argmax(y_hat, dim=1).long()
                 ] = 1
-                train_jacc_meter.update(y_hat_prime, y)
-
-            if isinstance(model, CarNeuralDNFEO) and not step_at_epoch_end:
-                # We found that stepping DDS (to update delta value) at each
-                # training step performs better than stepping at the end of each
-                # epoch. For this dataset we support stepping at each training
-                # step, but it is not guaranteed to work for all datasets.
-                delta_dict = dds.step(model.ndnf)
-                new_delta = delta_dict["new_delta_vals"][0]
-                old_delta = delta_dict["old_delta_vals"][0]
-
-                if new_delta == 1.0:
-                    delta_one_counter += 1
-
-        if isinstance(model, CarNeuralDNFEO) and step_at_epoch_end:
-            # Update delta value
-            delta_dict = dds.step(model.ndnf)
-            new_delta = delta_dict["new_delta_vals"][0]
-            old_delta = delta_dict["old_delta_vals"][0]
-
-            if new_delta == 1.0:
-                # The first time where new_delta_val becomes 1, the network
-                # isn't train with delta being 1 for that epoch. So
-                # delta_one_counter starts with -1, and when new_delta_val
-                # is first time being 1, the delta_one_counter becomes 0. We
-                # do not use the delta_one_counter for now, but it can be
-                # used to customise when to add auxiliary loss
-                delta_one_counter += 1
+            train_jacc_meter.update(y_hat_prime, y)
 
         # Log average performance for train
         avg_loss = train_loss_meters["overall_loss"].get_average()
@@ -230,7 +234,8 @@ def _train(
         if epoch % log_interval == 0:
             if isinstance(model, CarNeuralDNFEO):
                 log_info_str = (
-                    f"  [{epoch + 1:3d}] Train  Delta: {old_delta:.3f}  "
+                    f"  [{epoch + 1:3d}] Train  "
+                    f"Delta: {model.ndnf.get_delta_val()[0]:.3f}  "
                     f"avg loss: {avg_loss:.3f}  avg acc: {avg_acc:.3f}  "
                     f"avg sample jacc: {avg_sample_jacc:.3f}  "
                     f"avg macro jacc: {avg_macro_jacc:.3f}"
@@ -256,16 +261,18 @@ def _train(
             with torch.no_grad():
                 # Get model output and compute loss
                 x, y = get_x_and_y_car(
-                    data, device, use_ndnf=isinstance(model, CarNeuralDNFEO)
+                    data, device, use_ndnf=isinstance(model, CarBaseNeuralDNF)
                 )
 
                 y_hat = model(x)
-                conj_out = None
-                if isinstance(model, CarNeuralDNFEO):
+                conj_out, all_forms_dict = None, None
+                if isinstance(model, CarBaseNeuralDNF):
                     conj_out = model.get_conjunction(x)
+                if isinstance(model, CarNeuralDNFMT):
+                    all_forms_dict = model.get_all_forms(x)
 
                 loss_dict = loss_calculation(
-                    criterion, y_hat, y, model, conj_out
+                    criterion, y_hat, y, model, conj_out, all_forms_dict
                 )
 
                 loss = (
@@ -273,25 +280,34 @@ def _train(
                     + training_cfg["aux_loss"]["weight_l1_mod_lambda"]
                     * loss_dict["weight_reg_loss"]
                 )
-                if isinstance(model, CarNeuralDNFEO):
+                if isinstance(model, CarBaseNeuralDNF):
                     loss += (
                         training_cfg["aux_loss"]["tanh_conj_lambda"]
                         * loss_dict["conj_reg_loss"]
+                    )
+                if isinstance(model, CarNeuralDNFMT):
+                    loss += (
+                        training_cfg["aux_loss"]["mt_reg_lambda"]
+                        * loss_dict["mt_reg_loss"]
                     )
 
                 # Update meters
                 epoch_val_loss_meter.update(loss.item())
                 epoch_val_acc_meter.update(y_hat, y)
                 if isinstance(model, CarNeuralDNFEO):
-                    y_hat = model.get_pre_eo_output(x)
-                    y_hat = (torch.tanh(y_hat) > 0).long()
-                    epoch_val_jacc_meter.update(y_hat, y)
+                    y_hat_prime = model.get_pre_eo_output(x)
+                    y_hat_prime = (torch.tanh(y_hat_prime) > 0).long()
+                elif isinstance(model, CarNeuralDNFMT):
+                    assert all_forms_dict is not None
+                    y_hat_prime = (
+                        all_forms_dict["disjunction"]["tanh"] > 0
+                    ).long()
                 else:
                     y_hat_prime = torch.zeros(len(y), CAR_NUM_CLASSES).long()
                     y_hat_prime[
                         range(len(y)), torch.argmax(y_hat, dim=1).long()
                     ] = 1
-                    epoch_val_jacc_meter.update(y_hat_prime, y)
+                epoch_val_jacc_meter.update(y_hat_prime, y)
 
         val_avg_loss = epoch_val_loss_meter.get_average()
         val_avg_acc = epoch_val_acc_meter.get_average()
@@ -308,9 +324,24 @@ def _train(
             )
 
         # -------------------------------------------------------------------- #
-        # 3. Let scheduler update optimiser at end of epoch
+        # 3. Schedulers step
         # -------------------------------------------------------------------- #
         scheduler.step()
+
+        if isinstance(model, CarBaseNeuralDNF):
+            # Update delta value
+            delta_dict = dds.step(model.ndnf)
+            new_delta = delta_dict["new_delta_vals"][0]
+            old_delta = delta_dict["old_delta_vals"][0]
+
+            if new_delta == 1.0:
+                # The first time where new_delta_val becomes 1, the network
+                # isn't train with delta being 1 for that epoch. So
+                # delta_one_counter starts with -1, and when new_delta_val
+                # is first time being 1, the delta_one_counter becomes 0. We
+                # do not use the delta_one_counter for now, but it can be
+                # used to customise when to add auxiliary loss
+                delta_one_counter += 1
 
         # -------------------------------------------------------------------- #
         # 4. (Optional) WandB logging
@@ -327,13 +358,13 @@ def _train(
                 "val/sample_jaccard": val_sample_jaccard,
                 "val/macro_jaccard": val_macro_jaccard,
             }
-            if isinstance(model, CarNeuralDNFEO):
+            if isinstance(model, CarBaseNeuralDNF):
                 wandb_log_dict["train/delta"] = old_delta
             for key, meter in train_loss_meters.items():
                 if key == "overall_loss":
                     continue
                 wandb_log_dict[f"train/{key}"] = meter.get_average()
-            if gen_weight_hist and isinstance(model, CarNeuralDNFEO):
+            if gen_weight_hist and isinstance(model, CarBaseNeuralDNF):
                 # Generate weight histogram
                 f1, f2 = generate_weight_histogram(model.ndnf)
                 wandb_log_dict["conj_w_hist"] = wandb.Image(f1)
@@ -376,7 +407,7 @@ def train(cfg: DictConfig, run_dir: Path) -> dict[str, float]:
         X,
         y,
         test_size=training_cfg.get("val_size", 0.2),
-        random_state=training_cfg["seed"],
+        random_state=training_cfg.get("val_seed", 73),
     )
     train_dataset = CarDataset(X_train, y_train)
     val_dataset = CarDataset(X_val, y_val)
@@ -406,13 +437,13 @@ def train(cfg: DictConfig, run_dir: Path) -> dict[str, float]:
     )
     val_loader = DataLoader(
         val_dataset,
-        batch_size=training_cfg["batch_size"],
+        batch_size=NON_TRAIN_LOADER_BATCH_SIZE,
         num_workers=training_cfg.get("loader_num_workers", 0),
         pin_memory=device == torch.device("cuda"),
     )
     test_loader = DataLoader(
         test_dataset,
-        batch_size=training_cfg["batch_size"],
+        batch_size=NON_TRAIN_LOADER_BATCH_SIZE,
         num_workers=training_cfg.get("loader_num_workers", 0),
         pin_memory=device == torch.device("cuda"),
     )
@@ -424,14 +455,14 @@ def train(cfg: DictConfig, run_dir: Path) -> dict[str, float]:
 
     _train(training_cfg, model, train_loader, val_loader, device, use_wandb)
 
-    if isinstance(model, CarNeuralDNFEO):
+    if isinstance(model, CarBaseNeuralDNF):
         model.ndnf.set_delta_val(1.0)
 
     model_path = run_dir / "model.pth"
     torch.save(model.state_dict(), model_path)
 
     eval_model = model
-    if isinstance(model, CarNeuralDNFEO):
+    if isinstance(model, (CarNeuralDNFEO, CarNeuralDNFMT)):
         eval_model = model.to_ndnf_model()
     test_eval_raw_dict = car_classifier_eval(eval_model, device, test_loader)
     test_eval_result = parse_eval_return_meters_with_logging(
@@ -460,7 +491,7 @@ def train(cfg: DictConfig, run_dir: Path) -> dict[str, float]:
 @hydra.main(version_base=None, config_path="../conf", config_name="config")
 def run_experiment(cfg: DictConfig) -> None:
     # We expect the experiment name to be in the format of:
-    # car_{mlp/ndnf_eo}_...
+    # car_{mlp/ndnf_eo/ndnf_mt}_...
     experiment_name = cfg["training"]["experiment_name"]
 
     seed = cfg["training"]["seed"]
