@@ -1,0 +1,11 @@
+experiment_name: cdc_mlp_l128_b128_e100
+multirun_seeds: [185, 935, 1688, 1733, 1838, 1967, 2703, 2782, 3815, 4036, 5323, 5888, 6269, 6336, 7119, 7992]
+
+use_cuda: True
+use_mps: False
+
+model_type: mlp
+model_architecture:
+  num_latent: 128
+
+storage_dir: ??? # overwrite this
