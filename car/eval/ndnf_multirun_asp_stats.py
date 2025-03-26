@@ -1,7 +1,7 @@
 """
 This script measures the interpretability in terms of body length of an ASP
 extracted from its plain NDNF. The ASP programs should be translated from the
-NDNF already and stored (via running ndnf_eo_multirun_asp_translation).
+NDNF already and stored (via running ndnf_multirun_asp_translation).
 """
 
 import json

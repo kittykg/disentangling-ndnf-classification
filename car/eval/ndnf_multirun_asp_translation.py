@@ -1,7 +1,7 @@
 """
-This script translates Car NeuralDNFEO's plain NDNF with weights only in the set
-{±6, 0} to its logically-equivalent ASP program. The input model is strictly
-after pruning stage and a discretisation step (either
+This script translates Car NeuralDNF-EO or -MT's plain NDNF with weights only in
+the set {±6, 0} to its logically-equivalent ASP program. The input model is
+strictly after pruning stage and a discretisation step (either
 thresholding/disentanglement) in the post-training processing pipeline. The ASP
 program and the predicate translation are stored and evaluated, with the
 relevant information stored in a json. The evaluation metrics include accuracy,

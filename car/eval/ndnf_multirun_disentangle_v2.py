@@ -1,6 +1,6 @@
 """
-This script disentangles pruned plain NDNF from the CarNDNFEO model. The input
-models are strictly after pruning stage in the post-training processing
+This script disentangles pruned plain NDNF from the CarNDNF-EO or -MT model. The
+input models are strictly after pruning stage in the post-training processing
 pipeline. The thresholed NDNF models are stored and evaluated. The evaluation
 metrics include accuracy, sample Jaccard and macro Jaccard.
 """
@@ -53,7 +53,12 @@ from car.eval.eval_common import (
     DISENTANGLED_RESULT_JSON_BASE_NAME,
 )
 from car.eval.ndnf_multirun_prune import multiround_prune
-from car.models import CarNeuralDNFEO, CarNeuralDNF, construct_model
+from car.models import (
+    CarNeuralDNFEO,
+    CarNeuralDNFMT,
+    CarNeuralDNF,
+    construct_model,
+)
 
 log = logging.getLogger()
 
@@ -398,7 +403,7 @@ def multirun_disentangle(cfg: DictConfig) -> None:
             / f"{caps_experiment_name}-{s}"
         )
         model = construct_model(eval_cfg, num_features=hold_out_test_X.shape[1])
-        assert isinstance(model, CarNeuralDNFEO)
+        assert isinstance(model, (CarNeuralDNFEO, CarNeuralDNFMT))
 
         model = model.to_ndnf_model()
         model.to(device)
