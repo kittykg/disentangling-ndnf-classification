@@ -52,7 +52,7 @@ from car.eval.eval_common import (
     DISENTANGLED_MODEL_BASE_NAME,
     DISENTANGLED_RESULT_JSON_BASE_NAME,
 )
-from car.eval.ndnf_eo_multirun_prune import multiround_prune
+from car.eval.ndnf_multirun_prune import multiround_prune
 from car.models import CarNeuralDNFEO, CarNeuralDNF, construct_model
 
 log = logging.getLogger()

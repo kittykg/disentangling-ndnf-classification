@@ -1,0 +1,15 @@
+experiment_name: car_ndnf_mt_nc32_b32_dds_mon_linear_e500
+multirun_seeds: [470, 840, 1778, 3971, 5637, 5993, 6428, 6898, 7117, 7167, 7240, 7582, 8461, 8617, 9089, 9344]
+
+use_cuda: True
+use_mps: False
+
+val_size: 0.15
+val_seed: 73
+
+model_type: mt
+model_architecture:
+  n_conjunctions: 32
+
+discretisation_method: threshold # 'threshold' or 'disentangle'
+storage_dir: ??? # overwrite this

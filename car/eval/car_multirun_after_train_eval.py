@@ -41,7 +41,12 @@ from car.eval.eval_common import (
     DEFAULT_LOADER_NUM_WORKERS,
     AFTER_TRAIN_MODEL_BASE_NAME,
 )
-from car.models import CarNeuralDNFEO, CarNeuralDNF, construct_model
+from car.models import (
+    CarNeuralDNFEO,
+    CarNeuralDNFMT,
+    CarNeuralDNF,
+    construct_model,
+)
 
 
 log = logging.getLogger()
@@ -101,7 +106,7 @@ def multirun_after_train_eval(cfg: DictConfig) -> None:
             weights_only=True,
         )
         model.load_state_dict(model_state)
-        if isinstance(model, CarNeuralDNFEO):
+        if isinstance(model, (CarNeuralDNFEO, CarNeuralDNFMT)):
             model = model.to_ndnf_model()
         model.eval()
 

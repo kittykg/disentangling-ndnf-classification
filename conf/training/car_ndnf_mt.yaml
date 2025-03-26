@@ -1,4 +1,4 @@
-experiment_name: car_ndnf_mt_nc32_b32_dds_monotonic_e500
+experiment_name: car_ndnf_mt_nc32_b32_dds_mon_linear_e500
 seed: null
 
 use_cuda: True
@@ -23,11 +23,11 @@ loader_num_workers: 0
 epochs: 500
 
 dds:
-  type: monotonic
-  initial_delta: 0.0
+  type: monitoring_linear
+  initial_delta: 0.1
   delta_decay_delay: 5
-  delta_decay_steps: 3
-  delta_decay_rate: 50
+  delta_decay_steps: 3 # this will be ignored for monitoring based dds
+  delta_decay_rate: 0.1
 
 aux_loss:
   weight_l1_mod_lambda: 1e-7

@@ -1,10 +1,14 @@
-experiment_name: car_ndnf_eo_nc32_b64_e500
+experiment_name: car_ndnf_eo_nc32_b64_sbe_e500
 multirun_seeds: [615, 803, 1532, 3348, 4106, 4274, 4903, 6093, 6374, 6538, 7497, 8059, 8369, 8395, 8709, 9507]
+
+# experiment_name: car_ndnf_eo_nc32_b64_e500
+# multirun_seeds: [2323, 2385, 2488, 2864, 3123, 3209, 3978, 5906, 6851, 7287, 7296, 7535, 8173, 8372, 8564, 9964]
 
 use_cuda: True
 use_mps: False
 
 val_size: 0.15
+val_seed: 73
 
 model_type: eo
 model_architecture:
