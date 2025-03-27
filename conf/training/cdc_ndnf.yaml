@@ -1,4 +1,4 @@
-experiment_name: cdc_ndnf_pi16_nc128_b128_dds_linear_e200
+experiment_name: cdc_ndnf_pi16_nc128_b128_e200
 seed: null
 
 use_cuda: True
@@ -26,18 +26,18 @@ loader_num_workers: 4
 epochs: 200
 
 dds:
-  type: linear
+  type: exponential
   initial_delta: 0.1
   delta_decay_delay: 5
   delta_decay_steps: 2 # this will be ignored for monitoring based dds
-  delta_decay_rate: 0.05
+  delta_decay_rate: 1.1
   # performance_offset: 1e-2  # used for monitoring based dds
 
 pi_tau:
   initial_tau: 1
-  tau_decay_delay: 60
+  tau_decay_delay: 100
   tau_decay_steps: 1
-  tau_decay_rate: 0.99
+  tau_decay_rate: 0.9
   min_tau: 0.1
 
 aux_loss:

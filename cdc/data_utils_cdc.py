@@ -51,6 +51,13 @@ def get_cdc_data_np_from_path(
     return data["X"], data["y"], data["feature_names"]
 
 
+def get_scaler_mean_var_from_path(
+    data_preprocess_cfg: DictConfig,
+) -> tuple[np.ndarray, np.ndarray]:
+    data = np.load(Path(data_preprocess_cfg["save_dir"]) / "scaler.npz")
+    return data["mean"], data["var"]
+
+
 def get_x_and_y_cdc(
     data: list[Tensor],
     device: torch.device,
