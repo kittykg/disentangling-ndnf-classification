@@ -3,9 +3,8 @@ This script translates Mushroom NeuralDNF model with weights only in the set
 {±6, 0} to its logically-equivalent ASP program. The input model is strictly
 after pruning stage and a discretisation step (either
 thresholding/disentanglement) in the post-training processing pipeline. The ASP
-program and the predicate translation are stored and evaluated, with the
-relevant information stored in a json. The evaluation metrics include accuracy,
-precision, recall, F1 score and MCC.
+program is stored and evaluated, with the relevant information stored in a json.
+The evaluation metrics include accuracy, precision, recall, F1 score and MCC.
 """
 
 import json
