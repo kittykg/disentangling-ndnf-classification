@@ -34,9 +34,9 @@ dds:
 
 pi_tau:
   initial_tau: 1
-  tau_decay_delay: 100
+  tau_decay_delay: 50
   tau_decay_steps: 1
-  tau_decay_rate: 0.99
+  tau_decay_rate: 0.9
   min_tau: 0.1
 
 aux_loss:
