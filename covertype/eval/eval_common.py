@@ -28,7 +28,7 @@ log = logging.getLogger()
 
 
 DEFAULT_GEN_SEED = 2
-DEFAULT_LOADER_BATCH_SIZE = 2**14
+DEFAULT_LOADER_BATCH_SIZE = 2**17
 DEFAULT_LOADER_NUM_WORKERS = 0
 
 AFTER_TRAIN_MODEL_BASE_NAME = "model"
@@ -60,15 +60,20 @@ def covertype_classifier_eval(
     data_loader: DataLoader,
     discretise_invented_predicates: bool = True,
     do_logging: bool = False,
+    compute_error_dict: bool = True,
 ) -> dict[str, Meter]:
     model.eval()
     is_ndnf = isinstance(model, CoverTypeBaseNeuralDNF)
 
     jacc_meter = JaccardScoreMeter()
     acc_meter = AccuracyMeter()
-    error_meter = ErrorMeter()
-    iter_jacc_meter = JaccardScoreMeter()
-    iter_acc_meter = AccuracyMeter()
+
+    if compute_error_dict:
+        error_meter = ErrorMeter()
+
+    if do_logging:
+        iter_jacc_meter = JaccardScoreMeter()
+        iter_acc_meter = AccuracyMeter()
 
     for i, data in enumerate(data_loader):
         with torch.no_grad():
@@ -79,24 +84,25 @@ def covertype_classifier_eval(
             else:
                 y_hat = model(x)
 
-        iter_acc_meter.update(y_hat, y)
-        acc_meter.update(y_hat, y)
-
         if is_ndnf:
             # To get the jaccard score, we need to threshold the tanh activation
             # to get the binary prediction of each class
-            y_hat = (torch.tanh(y_hat) > 0).long()
+            y_hat_prime = (torch.tanh(y_hat) > 0).long()
         else:
             # To get the jaccard score for MLP, we need to take the argmax
             argmax_y_hat = torch.argmax(y_hat, dim=1)
-            y_hat = torch.zeros(len(y), COVERTYPE_NUM_CLASSES).long()
-            y_hat[range(len(y)), argmax_y_hat] = 1
+            y_hat_prime = torch.zeros(len(y), COVERTYPE_NUM_CLASSES).long()
+            y_hat_prime[range(len(y)), argmax_y_hat] = 1
 
-        iter_jacc_meter.update(y_hat, y)
-        jacc_meter.update(y_hat, y)
-        error_meter.update(y_hat, y)
+        acc_meter.update(y_hat, y)
+        jacc_meter.update(y_hat_prime, y)
+
+        if compute_error_dict:
+            error_meter.update(y_hat_prime, y)
 
         if do_logging:
+            iter_acc_meter.update(y_hat, y)
+            iter_jacc_meter.update(y_hat, y)
             log.info(
                 "[%3d] Test -- avg acc: %.3f -- avg jacc: %.3f"
                 % (
@@ -105,9 +111,8 @@ def covertype_classifier_eval(
                     iter_jacc_meter.get_average(),
                 )
             )
-
-        iter_acc_meter.reset()
-        iter_jacc_meter.reset()
+            iter_acc_meter.reset()
+            iter_jacc_meter.reset()
 
     if do_logging:
         log.info(
@@ -115,11 +120,11 @@ def covertype_classifier_eval(
             % (acc_meter.get_average(), jacc_meter.get_average())
         )
 
-    return {
-        "acc_meter": acc_meter,
-        "jacc_meter": jacc_meter,
-        "error_meter": error_meter,
-    }
+    ret_dict = {"acc_meter": acc_meter, "jacc_meter": jacc_meter}
+    if compute_error_dict:
+        ret_dict["error_meter"] = error_meter
+
+    return ret_dict
 
 
 def parse_eval_return_meters_with_logging(
@@ -148,6 +153,7 @@ def parse_eval_return_meters_with_logging(
     )
 
     if check_error_meter:
+        assert "error_meter" in eval_meters
         error_dict = eval_meters["error_meter"].get_average()
         assert isinstance(error_dict, dict)
         overall_error_rate = error_dict["overall_error_rate"]

@@ -1,5 +1,22 @@
 experiment_name: covertype_ndnf_mt_pi16_nc128_b128_dds_mon_linear_e200
-multirun_seeds: [4622, 7971, 9408]
+multirun_seeds: [
+  38,
+  699,
+  983,
+  1191,
+  2950,
+  3496,
+  4082,
+  4270,
+  4335,
+  4833,
+  5579,
+  6047,
+  7250,
+  7840,
+  8582,
+  8659,
+]
 
 use_cuda: True
 use_mps: False
