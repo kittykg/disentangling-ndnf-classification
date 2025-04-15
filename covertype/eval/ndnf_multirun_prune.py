@@ -1,8 +1,8 @@
 """
-This script prunes the CoverTypeNDNF-EO or -MT model. The input models are strictly
-after training and without any post-training processing. The pruned NDNF models
-are stored and evaluated. The evaluation metrics include accuracy, sample
-Jaccard and macro Jaccard.
+This script prunes the CoverTypeNDNF-EO or -MT model. The input models are
+strictly after training and without any post-training processing. The pruned
+NDNF models are stored and evaluated. The evaluation metrics include accuracy,
+sample Jaccard and macro Jaccard.
 """
 
 from datetime import datetime
@@ -314,6 +314,9 @@ def multirun_prune(cfg: DictConfig) -> None:
             test_size=eval_cfg.get("val_size", 0.2),
             random_state=eval_cfg.get("val_seed", 73),
         )
+        # Since covertype has a lot of instances of data entries, we further
+        # split the train dataset to use a smaller subset to speed up the
+        # pruning process
         _, X_train, _, y_train = train_test_split(
             X_train_og,
             y_train_og,
