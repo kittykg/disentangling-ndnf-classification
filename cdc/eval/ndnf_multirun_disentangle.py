@@ -113,6 +113,10 @@ def single_model_disentangle(
                     # positive form, always add the sign as 1
                     acc_pairs.append((non_zero_count, 1, c))
 
+                log.info(
+                    f"Disj {disj_id} conj {conj_id} sign {og_sign} -> "
+                    f"{len(ret)} new conj"
+                )
             # Arrange the combinations from negation to normal, and from most
             # general (more 0-weights) to most specific (less 0-weights)
             acc_pairs.sort(key=lambda x: (x[1], x[0]))
