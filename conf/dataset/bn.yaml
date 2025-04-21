@@ -1,0 +1,5 @@
+logic_program_name: sample # Choose from [sample, ara, budding, fission, mam]
+repeated_time: 2
+k_fold: 5
+random_state: 73
+save_file_base_dir: ???
