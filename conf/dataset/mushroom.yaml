@@ -1,0 +1,8 @@
+ucimlrepo_id: 73
+save_dir: ???
+
+hold_out:
+  create_hold_out: True
+  test_size: 0.2
+  random_state: 73
+  stratify: True

@@ -1,0 +1,15 @@
+ucimlrepo_id: 891
+save_dir: ???
+
+hold_out:
+  create_hold_out: True
+  test_size: 0.3
+  random_state: 73
+  stratify: True
+
+include_volatile_as_numeric: True
+
+undersample: True
+# undersample_cfg:
+#   version: 1
+#   n_neighbors: 5
