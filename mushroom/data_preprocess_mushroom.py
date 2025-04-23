@@ -20,7 +20,7 @@ def log_relevant_metadata(uci_dataset: dotdict) -> None:
 
 
 def impute_data(X: np.ndarray, method: str) -> np.ndarray:  # type: ignore
-    # TODO: Unuser if we will need this. Leave it for now.
+    # TODO: Unsure if we will need this. Leave it for now.
     pass
 
 

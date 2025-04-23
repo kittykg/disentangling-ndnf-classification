@@ -34,11 +34,7 @@ try:
 except ValueError:  # Already removed
     pass
 
-from analysis import (
-    MetricValueMeter,
-    AccuracyMeter,
-    JaccardScoreMeter,
-)
+from analysis import MetricValueMeter, AccuracyMeter, JaccardScoreMeter
 from utils import post_to_discord_webhook, generate_weight_histogram
 
 from car.eval.eval_common import (
@@ -125,7 +121,6 @@ def _train(
 
     # Delta delay scheduler if using NeuralDNF based model
     if isinstance(model, CarBaseNeuralDNF):
-        # Delta and tau delay scheduler if using NeuralDNF based model
         dds_type = {
             "linear": DeltaDelayedLinearDecayScheduler,
             "exponential": DeltaDelayedExponentialDecayScheduler,
