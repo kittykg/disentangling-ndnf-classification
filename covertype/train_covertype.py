@@ -477,6 +477,9 @@ def train(
     log.info(f"Device: {device}")
 
     # Get data
+    assert cfg["dataset"].get(
+        "convert_categorical_to_binary_encoding", False
+    ) == training_cfg.get("convert_categorical_to_binary_encoding", False)
     X, y = get_covertype_data_np_from_path(cfg["dataset"], is_test=False)
     X_train, X_val, y_train, y_val = train_test_split(
         X,

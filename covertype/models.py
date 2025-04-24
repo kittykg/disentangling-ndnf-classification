@@ -12,11 +12,15 @@ from neural_dnf.neural_dnf import (
 from predicate_invention import NeuralDNFPredicateInventor
 
 COVERTYPE_NUM_CLASSES: int = 7
-COVERTYPE_NUM_REAL_VALUED_FEATURES: int = 4
-COVERTYPE_NUM_BINARY_FEATURES: int = 40
+COVERTYPE_NUM_REAL_VALUED_FEATURES: int = 9
+COVERTYPE_NUM_BINARY_FEATURES: int = 35
 COVERTYPE_TOTAL_NUM_FEATURES: int = (
     COVERTYPE_NUM_REAL_VALUED_FEATURES + COVERTYPE_NUM_BINARY_FEATURES
-)
+)  # 44
+COVERTYPE_C2B_NUM_BINARY_FEATURES: int = 7
+COVERTYPE_C2B_TOTAL_NUM_FEATURES: int = (
+    COVERTYPE_NUM_REAL_VALUED_FEATURES + COVERTYPE_C2B_NUM_BINARY_FEATURES
+)  # 16
 
 
 class CoverTypeClassifier(nn.Module):
@@ -60,8 +64,10 @@ class CoverTypeMLP(CoverTypeClassifier):
 class CoverTypeBaseNeuralDNF(CoverTypeClassifier):
     invented_predicate_per_input: int
     num_conjunctions: int
+    c2b: bool
 
     predicate_inventor: NeuralDNFPredicateInventor
+    ndnf_num_input_features: int
     ndnf: BaseNeuralDNF
 
     def __init__(
@@ -69,17 +75,27 @@ class CoverTypeBaseNeuralDNF(CoverTypeClassifier):
         invented_predicate_per_input: int,
         num_conjunctions: int,
         predicate_inventor_tau: float = 1.0,
+        c2b: bool = False,
     ):
         super().__init__()
 
         self.invented_predicate_per_input = invented_predicate_per_input
         self.num_conjunctions = num_conjunctions
+        self.c2b = c2b
 
         self.predicate_inventor = NeuralDNFPredicateInventor(
             num_features=COVERTYPE_NUM_REAL_VALUED_FEATURES,
             invented_predicate_per_input=invented_predicate_per_input,
             tau=predicate_inventor_tau,
         )
+
+        self.ndnf_num_input_features = (
+            invented_predicate_per_input * COVERTYPE_NUM_REAL_VALUED_FEATURES
+        )
+        if c2b:
+            self.ndnf_num_input_features += COVERTYPE_C2B_NUM_BINARY_FEATURES
+        else:
+            self.ndnf_num_input_features += COVERTYPE_NUM_BINARY_FEATURES
 
         self.ndnf = self._create_ndnf_model()
 
@@ -90,34 +106,34 @@ class CoverTypeBaseNeuralDNF(CoverTypeClassifier):
         This function compute the invented predicates from the real valued
         features of the input data, and concat them with the binary features.
         """
-        # x: B x 44
+        # x: B x 44 or B x 16
         # We only take the real valued features
         real_val_features = x[:, :COVERTYPE_NUM_REAL_VALUED_FEATURES]
-        # real_val_features: B x 4
+        # real_val_features: B x 9
         binary_features = x[:, COVERTYPE_NUM_REAL_VALUED_FEATURES:]
-        # binary_features: B x 40
+        # binary_features: B x 35 or B x 7
         invented_predicates = self.predicate_inventor(
             real_val_features, discretised
         )
-        # invented_predicates: B x (4 * IP)
+        # invented_predicates: B x (9 * IP)
         final_tensor = torch.cat([invented_predicates, binary_features], dim=1)
-        # final_tensor: B x (4 * IP + 40)
+        # final_tensor: B x (9 * IP + 35) or B x (9 * IP + 7)
         return final_tensor
 
     def get_conjunction(
         self, x: Tensor, discretise_invented_predicate: bool = False
     ) -> Tensor:
-        # x: B x 44
+        # x: B x 44 or B x 16
         x = self.get_invented_predicates(x, discretise_invented_predicate)
-        # x: B x (4 * IP + 40)
+        # x: B x (9 * IP + 35) or B x (9 * IP + 7)
         return self.ndnf.get_conjunction(x)
 
     def forward(
         self, x: Tensor, discretise_invented_predicate: bool = False
     ) -> Tensor:
-        # x: B x 44
+        # x: B x 44 or B x 16
         x = self.get_invented_predicates(x, discretise_invented_predicate)
-        # x: B x (4 * IP + 40)
+        # x: B x (9 * IP + 35) or B x (9 * IP + 7)
         return self.ndnf(x)
 
     def get_weight_reg_loss(self) -> Tensor:
@@ -143,9 +159,7 @@ class CoverTypeNeuralDNF(CoverTypeBaseNeuralDNF):
 
     def _create_ndnf_model(self) -> NeuralDNF:
         return NeuralDNF(
-            n_in=self.invented_predicate_per_input
-            * COVERTYPE_NUM_REAL_VALUED_FEATURES
-            + COVERTYPE_NUM_BINARY_FEATURES,
+            n_in=self.ndnf_num_input_features,
             n_conjunctions=self.num_conjunctions,
             n_out=COVERTYPE_NUM_CLASSES,
             delta=1.0,
@@ -160,9 +174,7 @@ class CoverTypeNeuralDNFEO(CoverTypeBaseNeuralDNF):
 
     def _create_ndnf_model(self) -> NeuralDNFEO:
         return NeuralDNFEO(
-            n_in=self.invented_predicate_per_input
-            * COVERTYPE_NUM_REAL_VALUED_FEATURES
-            + COVERTYPE_NUM_BINARY_FEATURES,
+            n_in=self.ndnf_num_input_features,
             n_conjunctions=self.num_conjunctions,
             n_out=COVERTYPE_NUM_CLASSES,
             delta=1.0,
@@ -171,9 +183,9 @@ class CoverTypeNeuralDNFEO(CoverTypeBaseNeuralDNF):
     def get_pre_eo_output(
         self, x: Tensor, discretise_invented_predicate: bool = False
     ) -> Tensor:
-        # x: B x 44
+        # x: B x 44 or B x 16
         x = self.get_invented_predicates(x, discretise_invented_predicate)
-        # x: B x (4 * IP + 40)
+        # x: B x (9 * IP + 35) or B x (9 * IP + 7)
         return self.ndnf.get_plain_output(x)
 
     def to_ndnf_model(self) -> CoverTypeNeuralDNF:
@@ -202,9 +214,7 @@ class CoverTypeNeuralDNFMT(CoverTypeBaseNeuralDNF):
 
     def _create_ndnf_model(self):
         return NeuralDNFMutexTanh(
-            n_in=self.invented_predicate_per_input
-            * COVERTYPE_NUM_REAL_VALUED_FEATURES
-            + COVERTYPE_NUM_BINARY_FEATURES,
+            n_in=self.ndnf_num_input_features,
             n_conjunctions=self.num_conjunctions,
             n_out=COVERTYPE_NUM_CLASSES,
             delta=1.0,
@@ -217,17 +227,17 @@ class CoverTypeNeuralDNFMT(CoverTypeBaseNeuralDNF):
         Returns the raw logits of the model. This is useful for training with
         CrossEntropyLoss.
         """
-        # x: B x 44
+        # x: B x 44 or B x 16
         x = self.get_invented_predicates(x, discretise_invented_predicate)
-        # x: B x (4 * IP + 40)
+        # x: B x (9 * IP + 35) or B x (9 * IP + 7)
         return self.ndnf.get_raw_output(x)
 
     def get_all_forms(
         self, x: Tensor, discretise_invented_predicate: bool = False
     ) -> dict[str, dict[str, Tensor]]:
-        # x: B x 44
+        # x: B x 44 or B x 16
         x = self.get_invented_predicates(x, discretise_invented_predicate)
-        # x: B x (4 * IP + 40)
+        # x: B x (9 * IP + 35) or B x (9 * IP + 7)
         return self.ndnf.get_all_forms(x)
 
     def to_ndnf_model(self) -> CoverTypeNeuralDNF:
@@ -260,6 +270,7 @@ def construct_model(cfg: DictConfig) -> CoverTypeClassifier:
             predicate_inventor_tau=cfg["model_architecture"].get(
                 "predicate_inventor_tau", 1.0
             ),
+            c2b=cfg.get("convert_categorical_to_binary_encoding", False),
         )
 
     return CoverTypeMLP(

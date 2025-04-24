@@ -11,3 +11,5 @@ undersample: False
 # undersample_cfg:
 #   version: 1
 #   n_neighbors: 5
+
+convert_categorical_to_binary_encoding: True

@@ -78,10 +78,12 @@ class AccuracyMeter(Meter):
     targets: torch.Tensor
 
     output_to_prediction_fn: Callable[[Tensor], Tensor]
+    average: str
 
     def __init__(
         self,
         output_to_prediction_fn: Callable[[Tensor], Tensor] | None = None,
+        average: str = "binary",
     ) -> None:
         super(AccuracyMeter, self).__init__()
         self.outputs = torch.tensor([])
@@ -93,6 +95,7 @@ class AccuracyMeter(Meter):
             ).indices
         else:
             self.output_to_prediction_fn = output_to_prediction_fn
+        self.average = average
 
     def update(self, output: Tensor, target: Tensor) -> None:
         """
@@ -114,18 +117,36 @@ class AccuracyMeter(Meter):
         return {"accuracy": self.get_average()}
 
     def get_other_classification_metrics(self) -> dict[str, float]:
-        return {
+        return_dict = {
             "precision": float(
-                precision_score(self.targets.int(), self.outputs.int())
+                precision_score(
+                    self.targets.int(),
+                    self.outputs.int(),
+                    average=self.average,  # type: ignore
+                )
             ),
             "recall": float(
-                recall_score(self.targets.int(), self.outputs.int())
+                recall_score(
+                    self.targets.int(),
+                    self.outputs.int(),
+                    average=self.average,  # type: ignore
+                )
             ),
-            "f1": float(f1_score(self.targets.int(), self.outputs.int())),
-            "mcc": float(
-                matthews_corrcoef(self.targets.int(), self.outputs.int())
+            "f1": float(
+                f1_score(
+                    self.targets.int(),
+                    self.outputs.int(),
+                    average=self.average,  # type: ignore
+                ),
             ),
         }
+
+        if self.average == "binary":
+            return_dict["mcc"] = float(
+                matthews_corrcoef(self.targets.int(), self.outputs.int())
+            )
+
+        return return_dict
 
 
 class JaccardScoreMeter(Meter):
@@ -140,12 +161,14 @@ class JaccardScoreMeter(Meter):
     def update(self, output: Tensor, target: Tensor) -> None:
         """
         Accumulate the output and target. The output should be a binary tensor
-        with 1s in the predicted classes (N x C). Target should be a multi-class
-        tensor of correct class indices (shape N). The target tensor will be
-        converted to one-hot encoding (N x C).
+        with 1s in the predicted classes (N x C). Target can either be a
+        multi-class tensor of correct class indices (shape N), or a multi-label
+        tensor (N x C). If the target is shape N, it will be converted to
+        one-hot encoding (N x C).
         """
         y = torch.zeros(output.shape, dtype=torch.long)
-        y[range(output.shape[0]), target.long()] = 1
+        if len(target.shape) == 1:
+            y[range(output.shape[0]), target.long()] = 1
         self.targets = torch.cat([self.targets, y.detach().cpu()], dim=0)
         self.outputs = torch.cat([self.outputs, output.detach().cpu()], dim=0)
 

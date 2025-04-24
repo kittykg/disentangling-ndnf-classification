@@ -19,7 +19,7 @@ from data_utils import GenericUCIDataset
 
 # The first 6 features are real valued, and the rest are binary (converted from
 # 2 categorical features)
-NUM_REAL_VALUED_FEATURES = 6
+NUM_REAL_VALUED_FEATURES = 9
 
 
 class CoverTypeDataset(GenericUCIDataset):
@@ -36,15 +36,20 @@ def get_covertype_data_np_from_path(
     ], "Hold out test data must be created"
 
     undersample = data_preprocess_cfg.get("undersample", False)
+    categorical_to_binary = data_preprocess_cfg.get(
+        "convert_categorical_to_binary_encoding", False
+    )
+
+    file_name = "covertype"
+    if categorical_to_binary:
+        file_name += "_c2b"
     if undersample:
-        file_name = "covertype_undersampled.npz"
-    else:
-        file_name = f"covertype.npz"
+        file_name += "_undersampled"
 
     if is_test:
-        file_name = f"hold_out_test_{file_name}"
+        file_name = f"hold_out_test_{file_name}.npz"
     else:
-        file_name = f"train_{file_name}"
+        file_name = f"train_{file_name}.npz"
 
     npz_path = Path(data_preprocess_cfg["save_dir"]) / file_name
     data = np.load(npz_path)

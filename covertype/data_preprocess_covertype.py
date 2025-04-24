@@ -107,7 +107,65 @@ def standardise_numerical_features(
     return X_scaled, scaler
 
 
-def data_preprocess(uci_dataset: dotdict) -> dict[str, Any]:
+def convert_categorical_to_binary_encoding(X: pd.DataFrame) -> pd.DataFrame:
+    # covert the wilderness area and soil type to binary encoding.
+    # e.g. We convert the wilderness area to 2 bits, where 00 is wilderness area
+    # 1, 01 is wilderness area 2, 10 is wilderness area 3, and 11 is wilderness
+    # area 4. For an example, if wilderness area 1 is present (and by definition
+    # of categorical feature only one of the wilderness areas can be present),
+    # the feature vector will be [0 0]
+    wa_indices = [col for col in X.columns if col.startswith("Wilderness_Area")]
+    wa_columns = X[wa_indices].values
+    new_wa_columns = np.zeros((wa_columns.shape[0], 2), dtype=int)
+    for i in range(wa_columns.shape[0]):
+        one_location = np.where(wa_columns[i] == 1)[0]
+        assert len(one_location) == 1
+        one_location = one_location[0]
+        new_wa_columns[i] = np.array(
+            [int(x) for x in np.binary_repr(one_location, width=2)]
+        )
+
+    st_indices = [col for col in X.columns if col.startswith("Soil_Type")]
+    # after the removal of some soil types, there are 31 types left, and we have
+    # 32 unique combinations since it's possible to have all 31 types not true.
+    # So we need log_2(32) = 5 bits to represent the soil types.
+    new_st_columns = np.zeros((wa_columns.shape[0], 5), dtype=int)
+    st_columns = X[st_indices].values
+    for i in range(st_columns.shape[0]):
+        # there is maximum one place where the value is 1, and the rest are 0.
+        # we take the location of the 1 as its int value and convert it to
+        # binary If there is no 1, we assign it to '31'
+        one_location = np.where(st_columns[i] == 1)[0]
+        assert len(one_location) <= 1
+        if len(one_location) == 0:
+            one_location = 31
+        else:
+            one_location = one_location[0]
+
+        new_st_columns[i] = np.array(
+            [int(x) for x in np.binary_repr(one_location, width=5)]
+        )
+
+    # Drop the original columns and add the new columns
+    X_new = X.drop(wa_indices + st_indices, axis=1)
+    X_new = pd.concat(
+        [
+            X_new,
+            pd.DataFrame(
+                new_wa_columns,
+                columns=["Wilderness_Area_Bit_1", "Wilderness_Area_Bit_0"],
+            ),
+            pd.DataFrame(
+                new_st_columns,
+                columns=[f"Soil_Type_Bit{i}" for i in range(4, -1, -1)],
+            ),
+        ],
+        axis=1,
+    )
+    return X_new
+
+
+def data_preprocess(uci_dataset: dotdict, cfg: DictConfig) -> dict[str, Any]:
     X: pd.DataFrame = uci_dataset.data.features  # type: ignore
     y: pd.DataFrame = uci_dataset.data.targets  # type: ignore
 
@@ -121,6 +179,9 @@ def data_preprocess(uci_dataset: dotdict) -> dict[str, Any]:
 
     # remove the features that are not useful
     X_clean = X.drop(REMOVED_FEATURES, axis=1)
+
+    if cfg.get("convert_categorical_to_binary_encoding", False):
+        X_clean = convert_categorical_to_binary_encoding(X_clean)
 
     # standardise the numerical features
     X_scaled, scaler = standardise_numerical_features(X_clean)
@@ -143,7 +204,7 @@ def preprocess_and_save(cfg: DictConfig) -> None:
 
     hold_out = cfg["hold_out"]["create_hold_out"]
 
-    ret_dict = data_preprocess(uci_dataset)
+    ret_dict = data_preprocess(uci_dataset, cfg)
     X_np = ret_dict["X"]
     y_np = ret_dict["y"]
     feature_names = ret_dict["feature_names"]
@@ -151,8 +212,10 @@ def preprocess_and_save(cfg: DictConfig) -> None:
     log.info(f"Processed dataset: number of features: {X_np.shape[1]}")
 
     # Save the two numpy arrays into a compressed numpy file
-    file_name = "covertype.npz"
-    output_file_path = Path(cfg["save_dir"]) / file_name
+    file_base_name = "covertype"
+    if cfg.get("convert_categorical_to_binary_encoding", False):
+        file_base_name = "covertype_c2b"
+    output_file_path = Path(cfg["save_dir"]) / f"{file_base_name}.npz"
     np.savez_compressed(
         output_file_path,
         X=X_np,
@@ -162,15 +225,16 @@ def preprocess_and_save(cfg: DictConfig) -> None:
     log.info(f"Saved the processed dataset to {output_file_path}")
 
     # Also save the unscaled data
+    unscaled_output_path = (
+        Path(cfg["save_dir"]) / f"{file_base_name}_no_scaling.npz"
+    )
     np.savez_compressed(
-        Path(cfg["save_dir"]) / f"covertype_no_scaling.npz",
+        unscaled_output_path,
         X=ret_dict["X_no_scaling"],
         y=y_np,
         feature_names=feature_names,
     )
-    log.info(
-        f"Saved the unscaled data to {Path(cfg['save_dir']) / 'covertype_no_scaling.npz'}"
-    )
+    log.info(f"Saved the unscaled data to {unscaled_output_path}")
 
     # save the scaler
     scaler = ret_dict["scaler"]
@@ -198,10 +262,10 @@ def preprocess_and_save(cfg: DictConfig) -> None:
                 },
             ),
         )
-        file_name = "covertype_undersampled.npz"
+        file_base_name += "_undersampled"
         log.info(f"Undersampled dataset: {np.bincount(y_np)}")
 
-        output_file_path = Path(cfg["save_dir"]) / file_name
+        output_file_path = Path(cfg["save_dir"]) / f"{file_base_name}.npz"
         np.savez_compressed(
             output_file_path,
             X=X_np,
@@ -217,13 +281,13 @@ def preprocess_and_save(cfg: DictConfig) -> None:
             split_hold_out_data(X_np, y_np, cfg["hold_out"])
         )
         np.savez_compressed(
-            Path(cfg["save_dir"]) / f"train_{file_name}",
+            Path(cfg["save_dir"]) / f"train_{file_base_name}.npz",
             X=X_train,
             y=y_train,
             feature_names=feature_names,
         )
         np.savez_compressed(
-            Path(cfg["save_dir"]) / f"hold_out_test_{file_name}",
+            Path(cfg["save_dir"]) / f"hold_out_test_{file_base_name}.npz",
             X=X_hold_out_test,
             y=y_hold_out_test,
             feature_names=feature_names,
