@@ -40,7 +40,7 @@ DISENTANGLED_MODEL_BASE_NAME = "model_disentangled"
 DISENTANGLED_RESULT_JSON_BASE_NAME = "disentangled_result"
 
 
-EVAL_RELEVANT_KEYS = ["accuracy", "sample_jaccard", "macro_jaccard"]
+EVAL_RELEVANT_KEYS = ["accuracy", "sample_jaccard", "macro_jaccard", "f1"]
 EVAL_ERROR_DICT_RELEVANT_KEYS = [
     "missing_error_class_count",
     "missing_overall_error_count",
@@ -67,7 +67,6 @@ def covertype_classifier_eval(
 
     jacc_meter = JaccardScoreMeter()
     acc_meter = AccuracyMeter()
-
     if compute_error_dict:
         error_meter = ErrorMeter()
 
@@ -96,19 +95,21 @@ def covertype_classifier_eval(
 
         acc_meter.update(y_hat, y)
         jacc_meter.update(y_hat_prime, y)
-
         if compute_error_dict:
             error_meter.update(y_hat_prime, y)
 
         if do_logging:
             iter_acc_meter.update(y_hat, y)
-            iter_jacc_meter.update(y_hat, y)
+            iter_jacc_meter.update(y_hat_prime, y)
             log.info(
-                "[%3d] Test -- avg acc: %.3f -- avg jacc: %.3f"
+                "[%3d] Test -- acc: %.3f -- jacc: %.3f -- weighted f1: %.3f"
                 % (
                     i + 1,
                     iter_acc_meter.get_average(),
                     iter_jacc_meter.get_average(),
+                    iter_acc_meter.get_other_classification_metrics("weighted")[
+                        "f1"
+                    ],
                 )
             )
             iter_acc_meter.reset()
@@ -116,8 +117,12 @@ def covertype_classifier_eval(
 
     if do_logging:
         log.info(
-            "Overall Test -- avg acc: %.3f -- avg jacc: %.3f"
-            % (acc_meter.get_average(), jacc_meter.get_average())
+            "Overall Test -- avg acc: %.3f -- avg jacc: %.3f -- weighted f1: %.3f"
+            % (
+                acc_meter.get_average(),
+                jacc_meter.get_average(),
+                acc_meter.get_other_classification_metrics("weighted")["f1"],
+            )
         )
 
     ret_dict = {"acc_meter": acc_meter, "jacc_meter": jacc_meter}
@@ -134,7 +139,12 @@ def parse_eval_return_meters_with_logging(
     do_logging: bool = True,
     filter_out_list: bool = False,  # enable this when logging into wandb
 ) -> dict[str, Any]:
-    return_dict = {"accuracy": eval_meters["acc_meter"].get_average()}
+    acc_meter = eval_meters["acc_meter"]
+    assert isinstance(acc_meter, AccuracyMeter)
+    return_dict = {
+        "accuracy": acc_meter.get_average(),
+        "f1": acc_meter.get_other_classification_metrics("weighted")["f1"],
+    }
 
     jacc_meter = eval_meters["jacc_meter"]
     assert isinstance(jacc_meter, JaccardScoreMeter)
@@ -148,6 +158,7 @@ def parse_eval_return_meters_with_logging(
     log_info_str = (
         f"{model_name}\n"
         f"\tAccuracy: {return_dict['accuracy']:.3f}\n"
+        f"\tF1: {return_dict['f1']:.3f}\n"
         f"\tSample Jaccard: {return_dict['sample_jaccard']:.3f}\n"
         f"\tMacro Jaccard: {return_dict['macro_jaccard']:.3f}"
     )

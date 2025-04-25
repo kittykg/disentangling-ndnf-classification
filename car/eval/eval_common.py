@@ -36,7 +36,7 @@ DISENTANGLED_MODEL_BASE_NAME = "model_disentangled"
 DISENTANGLED_RESULT_JSON_BASE_NAME = "disentangled_result"
 
 
-EVAL_RELEVANT_KEYS = ["accuracy", "sample_jaccard", "macro_jaccard"]
+EVAL_RELEVANT_KEYS = ["accuracy", "sample_jaccard", "macro_jaccard", "f1"]
 EVAL_ERROR_DICT_RELEVANT_KEYS = [
     "missing_error_class_count",
     "missing_overall_error_count",
@@ -62,43 +62,46 @@ def car_classifier_eval(
     jacc_meter = JaccardScoreMeter()
     acc_meter = AccuracyMeter()
     error_meter = ErrorMeter()
-    iter_jacc_meter = JaccardScoreMeter()
-    iter_acc_meter = AccuracyMeter()
+
+    if do_logging:
+        iter_jacc_meter = JaccardScoreMeter()
+        iter_acc_meter = AccuracyMeter()
 
     for i, data in enumerate(data_loader):
         with torch.no_grad():
             x, y = get_x_and_y_car(data, device, use_ndnf=is_ndnf)
             y_hat = model(x)
 
-        iter_acc_meter.update(y_hat, y)
-        acc_meter.update(y_hat, y)
-
         if is_ndnf:
             # To get the jaccard score, we need to threshold the tanh activation
             # to get the binary prediction of each class
-            y_hat = (torch.tanh(y_hat) > 0).long()
+            y_hat_prime = (torch.tanh(y_hat) > 0).long()
         else:
             # To get the jaccard score for MLP, we need to take the argmax
             argmax_y_hat = torch.argmax(y_hat, dim=1)
-            y_hat = torch.zeros(len(y), CAR_NUM_CLASSES).long()
-            y_hat[range(len(y)), argmax_y_hat] = 1
+            y_hat_prime = torch.zeros(len(y), CAR_NUM_CLASSES).long()
+            y_hat_prime[range(len(y)), argmax_y_hat] = 1
 
-        iter_jacc_meter.update(y_hat, y)
-        jacc_meter.update(y_hat, y)
-        error_meter.update(y_hat, y)
+        acc_meter.update(y_hat, y)
+        jacc_meter.update(y_hat_prime, y)
+        error_meter.update(y_hat_prime, y)
 
         if do_logging:
+            iter_acc_meter.update(y_hat, y)
+            iter_jacc_meter.update(y_hat_prime, y)
             log.info(
-                "[%3d] Test -- avg acc: %.3f -- avg jacc: %.3f"
+                "[%3d] Test -- acc: %.3f -- jacc: %.3f -- weighted f1: %.3f"
                 % (
                     i + 1,
                     iter_acc_meter.get_average(),
                     iter_jacc_meter.get_average(),
+                    iter_acc_meter.get_other_classification_metrics("weighted")[
+                        "f1"
+                    ],
                 )
             )
-
-        iter_acc_meter.reset()
-        iter_jacc_meter.reset()
+            iter_acc_meter.reset()
+            iter_jacc_meter.reset()
 
     if do_logging:
         log.info(
@@ -120,7 +123,12 @@ def parse_eval_return_meters_with_logging(
     do_logging: bool = True,
     filter_out_list: bool = False,  # enable this when logging into wandb
 ) -> dict[str, Any]:
-    return_dict = {"accuracy": eval_meters["acc_meter"].get_average()}
+    acc_meter = eval_meters["acc_meter"]
+    assert isinstance(acc_meter, AccuracyMeter)
+    return_dict = {
+        "accuracy": acc_meter.get_average(),
+        "f1": acc_meter.get_other_classification_metrics("weighted")["f1"],
+    }
 
     jacc_meter = eval_meters["jacc_meter"]
     assert isinstance(jacc_meter, JaccardScoreMeter)
@@ -134,6 +142,7 @@ def parse_eval_return_meters_with_logging(
     log_info_str = (
         f"{model_name}\n"
         f"\tAccuracy: {return_dict['accuracy']:.3f}\n"
+        f"\tF1: {return_dict['f1']:.3f}\n"
         f"\tSample Jaccard: {return_dict['sample_jaccard']:.3f}\n"
         f"\tMacro Jaccard: {return_dict['macro_jaccard']:.3f}"
     )

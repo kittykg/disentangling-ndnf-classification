@@ -161,10 +161,10 @@ def train_fold(
         acc_meter_conversion_fn = lambda y_hat: y_hat > 0.5
     else:
         acc_meter_conversion_fn = lambda y_hat: torch.sigmoid(y_hat) > 0.5
-    train_acc_meter = AccuracyMeter(acc_meter_conversion_fn, "samples")
+    train_acc_meter = AccuracyMeter(acc_meter_conversion_fn)
     train_jacc_meter = JaccardScoreMeter()
     epoch_val_loss_meter = MetricValueMeter("val_loss_meter")
-    epoch_val_acc_meter = AccuracyMeter(acc_meter_conversion_fn, "samples")
+    epoch_val_acc_meter = AccuracyMeter(acc_meter_conversion_fn)
     epoch_val_jacc_meter = JaccardScoreMeter()
 
     for epoch in range(training_cfg["epochs"]):

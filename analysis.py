@@ -78,12 +78,10 @@ class AccuracyMeter(Meter):
     targets: torch.Tensor
 
     output_to_prediction_fn: Callable[[Tensor], Tensor]
-    average: str
 
     def __init__(
         self,
         output_to_prediction_fn: Callable[[Tensor], Tensor] | None = None,
-        average: str = "binary",
     ) -> None:
         super(AccuracyMeter, self).__init__()
         self.outputs = torch.tensor([])
@@ -95,7 +93,6 @@ class AccuracyMeter(Meter):
             ).indices
         else:
             self.output_to_prediction_fn = output_to_prediction_fn
-        self.average = average
 
     def update(self, output: Tensor, target: Tensor) -> None:
         """
@@ -116,32 +113,34 @@ class AccuracyMeter(Meter):
     def to_dict(self) -> dict[str, float]:
         return {"accuracy": self.get_average()}
 
-    def get_other_classification_metrics(self) -> dict[str, float]:
+    def get_other_classification_metrics(
+        self, average: str = "binary"
+    ) -> dict[str, float]:
         return_dict = {
             "precision": float(
                 precision_score(
                     self.targets.int(),
                     self.outputs.int(),
-                    average=self.average,  # type: ignore
+                    average=average,  # type: ignore
                 )
             ),
             "recall": float(
                 recall_score(
                     self.targets.int(),
                     self.outputs.int(),
-                    average=self.average,  # type: ignore
+                    average=average,  # type: ignore
                 )
             ),
             "f1": float(
                 f1_score(
                     self.targets.int(),
                     self.outputs.int(),
-                    average=self.average,  # type: ignore
+                    average=average,  # type: ignore
                 ),
             ),
         }
 
-        if self.average == "binary":
+        if average == "binary":
             return_dict["mcc"] = float(
                 matthews_corrcoef(self.targets.int(), self.outputs.int())
             )

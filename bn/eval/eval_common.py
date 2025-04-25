@@ -49,10 +49,10 @@ def boolean_network_classifier_eval(
     else:
         acc_meter_conversion_fn = lambda y_hat: torch.sigmoid(y_hat) > 0.5
 
-    acc_meter = AccuracyMeter(acc_meter_conversion_fn, "samples")
+    acc_meter = AccuracyMeter(acc_meter_conversion_fn)
     jacc_meter = JaccardScoreMeter()
     if do_logging:
-        iter_acc_meter = AccuracyMeter(acc_meter_conversion_fn, "samples")
+        iter_acc_meter = AccuracyMeter(acc_meter_conversion_fn)
         iter_jacc_meter = JaccardScoreMeter()
 
     for i, data in enumerate(data_loader):
@@ -78,7 +78,9 @@ def boolean_network_classifier_eval(
             iter_jacc_meter.update(y_hat_prime, y)
 
             iter_acc = iter_acc_meter.get_average()
-            other_metrics = iter_acc_meter.get_other_classification_metrics()
+            other_metrics = iter_acc_meter.get_other_classification_metrics(
+                "samples"
+            )
             iter_precision = other_metrics["precision"]
             iter_recall = other_metrics["recall"]
             iter_f1 = other_metrics["f1"]
@@ -101,7 +103,7 @@ def boolean_network_classifier_eval(
 
     if do_logging:
         acc = acc_meter.get_average()
-        other_metrics = acc_meter.get_other_classification_metrics()
+        other_metrics = acc_meter.get_other_classification_metrics("samples")
         avg_sample_jacc = jacc_meter.get_average()
         avg_macro_jacc = jacc_meter.get_average("macro")
         assert isinstance(avg_macro_jacc, float)
@@ -130,7 +132,7 @@ def parse_eval_return_meters_with_logging(
     assert isinstance(jacc_meter, JaccardScoreMeter)
 
     accuracy = acc_meter.get_average()
-    other_metrics = acc_meter.get_other_classification_metrics()
+    other_metrics = acc_meter.get_other_classification_metrics("samples")
     precision = other_metrics["precision"]
     recall = other_metrics["recall"]
     f1 = other_metrics["f1"]
