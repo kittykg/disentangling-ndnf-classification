@@ -7,7 +7,7 @@ import sys
 import hydra
 import numpy as np
 from omegaconf import DictConfig
-from sklearn.model_selection import RepeatedKFold
+from sklearn.model_selection import RepeatedKFold, train_test_split
 
 file = Path(__file__).resolve()
 parent, root = file.parent, file.parents[1]
@@ -169,26 +169,60 @@ def rkf_and_save(
         log.info("Continuing...")
 
 
+def split_hold_out_data(
+    raw_data: np.ndarray, hold_out_cfg: DictConfig
+) -> tuple[np.ndarray, np.ndarray]:
+    test_size = hold_out_cfg.get("test_size", 0.2)
+    random_state = hold_out_cfg.get("random_state", 73)
+
+    log.info(
+        f"Creating hold out test set: test_size={test_size}, "
+        f"random_state={random_state}"
+    )
+
+    indices = np.arange(len(raw_data))
+    train_idx, hold_out_idx = train_test_split(
+        indices,
+        test_size=test_size,
+        random_state=random_state,
+    )
+
+    return raw_data[train_idx], raw_data[hold_out_idx]
+
+
 @hydra.main(
     version_base=None, config_path="../../conf/dataset", config_name="bn"
 )
 def main(cfg: DictConfig):
-    logic_program_name = cfg["logic_program_name"]
+    dataset_name = cfg["dataset_name"]
     repeated_time = cfg["repeated_time"]
     k_fold = cfg["k_fold"]
     random_state = cfg["random_state"]
 
-    logic_program_path = LOGIC_PROGRAM_DIR / f"{logic_program_name}.lp"
+    logic_program_path = LOGIC_PROGRAM_DIR / f"{dataset_name}.lp"
     if not logic_program_path.exists():
         raise FileNotFoundError(f"File {logic_program_path} does not exist")
 
-    save_file_dir = Path(cfg["save_file_base_dir"]) / logic_program_name
+    save_file_dir = Path(cfg["save_file_base_dir"]) / dataset_name
     save_file_dir.mkdir(parents=True, exist_ok=True)
 
     raw_data = generate_raw_transition_data(logic_program_path)
 
-    with open(save_file_dir / f"{logic_program_name}_raw_data.npy", "wb") as f:
+    with open(save_file_dir / f"{dataset_name}_raw_data.npy", "wb") as f:
         np.save(f, np.array(raw_data))
+
+    if "hold_out" in cfg and cfg["hold_out"]["create_hold_out"]:
+        train_data, hold_out_data = split_hold_out_data(
+            np.array(raw_data), cfg["hold_out"]
+        )
+        with open(save_file_dir / f"{dataset_name}_train.npy", "wb") as f:
+            np.save(f, train_data)
+        with open(
+            save_file_dir / f"{dataset_name}_hold_out_test.npy", "wb"
+        ) as f:
+            np.save(f, hold_out_data)
+        log.info(f"Train data shape: {train_data.shape}")
+        log.info(f"Hold out test data shape: {hold_out_data.shape}")
 
     gen_normal_data(
         raw_data, save_file_dir, repeated_time, k_fold, random_state

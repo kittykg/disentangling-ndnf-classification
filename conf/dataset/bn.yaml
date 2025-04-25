@@ -1,5 +1,10 @@
-logic_program_name: sample # Choose from [sample, ara, budding, fission, mam]
-repeated_time: 2
+dataset_name: sample # Choose from [sample, ara, budding, fission, mam]
+repeated_time: 1
 k_fold: 5
 random_state: 73
 save_file_base_dir: ???
+
+hold_out:
+  create_hold_out: True
+  test_size: 0.2
+  random_state: 73

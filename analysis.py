@@ -166,10 +166,14 @@ class JaccardScoreMeter(Meter):
         tensor (N x C). If the target is shape N, it will be converted to
         one-hot encoding (N x C).
         """
-        y = torch.zeros(output.shape, dtype=torch.long)
         if len(target.shape) == 1:
+            y = torch.zeros(output.shape, dtype=torch.long)
             y[range(output.shape[0]), target.long()] = 1
-        self.targets = torch.cat([self.targets, y.detach().cpu()], dim=0)
+            self.targets = torch.cat([self.targets, y.detach().cpu()], dim=0)
+        else:
+            self.targets = torch.cat(
+                [self.targets, target.detach().cpu()], dim=0
+            )
         self.outputs = torch.cat([self.outputs, output.detach().cpu()], dim=0)
 
     def get_average(self, average="samples") -> float | np.ndarray:
