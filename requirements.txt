@@ -1,0 +1,11 @@
+black
+clingo
+hydra-core
+matplotlib
+numpy
+pandas
+scikit-learn
+tensorboard
+torch
+ucimlrepo
+wandb

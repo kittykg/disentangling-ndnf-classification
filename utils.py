@@ -43,6 +43,7 @@ def post_to_discord_webhook(
     experiment_name: str,
     message_body: str,
     errored: bool,
+    starting_notification: bool = False,
     keyboard_interrupt: bool | None = None,
 ) -> None:
     dt = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
@@ -52,6 +53,12 @@ def post_to_discord_webhook(
             f"[{dt}]\n"
             f"Experiment {experiment_name} on hine {nodename} "
             f"INTERRUPTED!!\n"
+        )
+    elif starting_notification:
+        message_head = (
+            f"[{dt}]\n"
+            f"Experiment {experiment_name} on hine {nodename} "
+            f"STARTING!!\n"
         )
     else:
         message_head = (
