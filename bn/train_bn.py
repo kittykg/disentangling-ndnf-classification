@@ -145,9 +145,33 @@ def _train(
         optimiser = torch.optim.Adam(
             model.parameters(), lr=lr, weight_decay=weight_decay
         )
-    scheduler = torch.optim.lr_scheduler.StepLR(
-        optimiser, step_size=training_cfg["scheduler_step"], gamma=0.1
-    )
+
+    if "scheduler" in training_cfg:
+        scheduler_key = training_cfg["scheduler"]["type"]
+        assert scheduler_key in [
+            "cos",
+            "step",
+        ], "Invalid scheduler key, must be 'cos' or 'step'"
+
+        if scheduler_key == "cos":
+            scheduler = cosine_with_exponential_decay_and_warmup_scheduler(
+                optimiser,
+                training_cfg["epochs"],
+                len(train_loader.dataset),  # type: ignore
+                training_cfg["batch_size"],
+                training_cfg["scheduler"]["warmup_steps"],
+                decay_rate=training_cfg["scheduler"]["decay_rate"],
+                decay_steps=training_cfg["scheduler"]["decay_steps"],
+                min_lr=training_cfg["scheduler"]["min_lr"],
+            )
+        else:
+            scheduler = torch.optim.lr_scheduler.StepLR(
+                optimiser, step_size=training_cfg["scheduler_step"], gamma=0.1
+            )
+    else:
+        scheduler = torch.optim.lr_scheduler.StepLR(
+            optimiser, step_size=training_cfg["scheduler_step"], gamma=0.1
+        )
 
     # Loss function
     loss_func_key = training_cfg["loss_func"]
