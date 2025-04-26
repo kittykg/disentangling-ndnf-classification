@@ -57,28 +57,28 @@ from car.models import (
 log = logging.getLogger()
 
 
-def comparison_fn(og_parsed_eval_log, new_prased_eval_log):
+def comparison_fn(og_parsed_eval_log, new_parsed_eval_log):
     # check accuracy, if it is less than the original, then no prune
-    if new_prased_eval_log["accuracy"] < og_parsed_eval_log["accuracy"]:
+    if new_parsed_eval_log["accuracy"] < og_parsed_eval_log["accuracy"]:
         return False
 
     # check sample jaccard, if it is less than the original, then no prune
     if (
-        new_prased_eval_log["sample_jaccard"]
+        new_parsed_eval_log["sample_jaccard"]
         < og_parsed_eval_log["sample_jaccard"]
     ):
         return False
 
     # check macro jaccard, if it is less than the original, then no prune
     if (
-        new_prased_eval_log["macro_jaccard"]
+        new_parsed_eval_log["macro_jaccard"]
         < og_parsed_eval_log["macro_jaccard"]
     ):
         return False
 
     # error dict
     og_error_dict = og_parsed_eval_log["error_dict"]
-    new_error_dict = new_prased_eval_log["error_dict"]
+    new_error_dict = new_parsed_eval_log["error_dict"]
 
     # check overall error class count, if it is greater than the original,
     # then no prune

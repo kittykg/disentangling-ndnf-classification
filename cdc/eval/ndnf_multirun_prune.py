@@ -60,9 +60,9 @@ def multiround_prune(
     train_loader: DataLoader,
     eval_log_fn: Callable[[dict[str, Any]], dict[str, float]],
 ) -> int:
-    def comparison_fn(og_parsed_eval_log, new_prased_eval_log):
+    def comparison_fn(og_parsed_eval_log, new_parsed_eval_log):
         for k in ["accuracy", "precision", "recall", "f1", "mcc"]:
-            if new_prased_eval_log[k] < og_parsed_eval_log[k]:
+            if new_parsed_eval_log[k] < og_parsed_eval_log[k]:
                 return False
         return True
 
