@@ -25,7 +25,7 @@ except ValueError:  # Already removed
 
 from analysis import synthesize
 from utils import post_to_discord_webhook
-from zoo.eval.asp_eval_common import (
+from cdc.eval.ndnf_multirun_asp_translation import (
     ASP_TRANSLATION_THRESHOLDED_JSON_BASE_NAME,
     ASP_TRANSLATION_DISENTANGLED_JSON_BASE_NAME,
 )
