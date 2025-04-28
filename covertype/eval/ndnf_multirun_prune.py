@@ -59,12 +59,25 @@ from covertype.models import (
 
 log = logging.getLogger()
 PRE_PRUNE_EPSILON = 1e-3
+DEFAULT_COMPUTE_ERROR_DICT = False
 
 
-def comparison_fn(og_parsed_eval_log, new_parsed_eval_log):
+def comparison_fn(
+    og_parsed_eval_log,
+    new_parsed_eval_log,
+    compute_error_dict: bool = DEFAULT_COMPUTE_ERROR_DICT,
+):
     # check accuracy, if it is less than the original, then no prune
     if new_parsed_eval_log["accuracy"] < og_parsed_eval_log["accuracy"]:
         return False
+
+    # check f1, if it is less than the original, then no prune
+    if new_parsed_eval_log["f1"] < og_parsed_eval_log["f1"]:
+        return False
+
+    if not compute_error_dict:
+        # if we are not computing the error dict, then we can return True
+        return True
 
     # check sample jaccard, if it is less than the original, then no prune
     if (
@@ -112,10 +125,14 @@ def multiround_prune(
     device: torch.device,
     train_loader: DataLoader,
     eval_log_fn: Callable[[dict[str, Any]], dict[str, float]],
+    compute_error_dict: bool = DEFAULT_COMPUTE_ERROR_DICT,
 ) -> int:
     prune_eval_function = lambda: parse_eval_return_meters_with_logging(
-        eval_meters=covertype_classifier_eval(model, device, train_loader),
+        eval_meters=covertype_classifier_eval(
+            model, device, train_loader, compute_error_dict=compute_error_dict
+        ),
         model_name="Prune (intermediate)",
+        check_error_meter=compute_error_dict,
         do_logging=False,
     )
 
@@ -180,10 +197,16 @@ def single_model_prune(
     model_dir: Path,
 ) -> dict[str, Any]:
     def _eval_with_log_wrapper(
-        model_name: str, data_loader: DataLoader = val_loader
+        model_name: str,
+        data_loader: DataLoader = val_loader,
+        compute_error_dict: bool = DEFAULT_COMPUTE_ERROR_DICT,
     ) -> dict[str, float]:
-        eval_meters = covertype_classifier_eval(model, device, data_loader)
-        return parse_eval_return_meters_with_logging(eval_meters, model_name)
+        eval_meters = covertype_classifier_eval(
+            model, device, data_loader, compute_error_dict=compute_error_dict
+        )
+        return parse_eval_return_meters_with_logging(
+            eval_meters, model_name, check_error_meter=compute_error_dict
+        )
 
     # Stage 1: Evaluate the model post-training
     _eval_with_log_wrapper("CoverType NDNF (after training, test)", test_loader)
