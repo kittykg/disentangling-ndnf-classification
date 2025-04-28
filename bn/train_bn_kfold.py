@@ -445,14 +445,14 @@ def train(cfg: DictConfig, run_dir: Path) -> dict[str, float]:
 
     # K-Fold
     assert "k_folds" in training_cfg, "k_folds not found in training config"
-    skf = KFold(
+    kf = KFold(
         n_splits=training_cfg["k_folds"],
         shuffle=True,
         random_state=training_cfg["seed"],
     )
 
     for fold_id, (train_index, test_index) in enumerate(
-        skf.split(np.arange(len(bn_dataset)))
+        kf.split(np.arange(len(bn_dataset)))
     ):
         log.info(f"Fold {fold_id} starts")
         model, fold_result = train_fold(

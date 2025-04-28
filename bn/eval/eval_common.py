@@ -79,23 +79,28 @@ def boolean_network_classifier_eval(
 
             iter_acc = iter_acc_meter.get_average()
             other_metrics = iter_acc_meter.get_other_classification_metrics(
-                "samples"
+                average="micro", compute_hamming=True
             )
             iter_precision = other_metrics["precision"]
             iter_recall = other_metrics["recall"]
             iter_f1 = other_metrics["f1"]
+            iter_hamming = other_metrics["hamming"]
             iter_sample_jacc = iter_jacc_meter.get_average()
             iter_macro_jacc = iter_jacc_meter.get_average("macro")
-            assert isinstance(iter_macro_jacc, float)
+            iter_micro_jacc = iter_jacc_meter.get_average("micro")
             assert isinstance(iter_sample_jacc, float)
+            assert isinstance(iter_macro_jacc, float)
+            assert isinstance(iter_micro_jacc, float)
 
             log.info(
                 f"[{i + 1:3d}] Test -- Acc: {iter_acc:.3f} -- "
                 f"Precision: {iter_precision:.3f} -- "
                 f"Recall: {iter_recall:.3f} -- "
                 f"F1: {iter_f1:.3f} -- "
+                f"Hamming: {iter_hamming:.3f} -- "
                 f"Sample Jacc: {iter_sample_jacc:.3f} -- "
-                f"Macro Jacc: {iter_macro_jacc:.3f}"
+                f"Macro Jacc: {iter_macro_jacc:.3f} -- "
+                f"Micro Jacc: {iter_micro_jacc:.3f}"
             )
 
             iter_acc_meter.reset()
@@ -103,19 +108,25 @@ def boolean_network_classifier_eval(
 
     if do_logging:
         acc = acc_meter.get_average()
-        other_metrics = acc_meter.get_other_classification_metrics("samples")
+        other_metrics = acc_meter.get_other_classification_metrics(
+            average="micro", compute_hamming=True
+        )
         avg_sample_jacc = jacc_meter.get_average()
         avg_macro_jacc = jacc_meter.get_average("macro")
+        avg_micro_jacc = jacc_meter.get_average("micro")
         assert isinstance(avg_macro_jacc, float)
         assert isinstance(avg_sample_jacc, float)
+        assert isinstance(avg_micro_jacc, float)
 
         log.info(
             f"Overall Test -- Acc: {acc:.3f} -- "
             f"Precision: {other_metrics['precision']:.3f} -- "
             f"Recall: {other_metrics['recall']:.3f} -- "
             f"F1: {other_metrics['f1']:.3f} -- "
+            f"Hamming: {other_metrics['hamming']:.3f} -- "
             f"Sample Jacc: {avg_sample_jacc:.3f} -- "
-            f"Macro Jacc: {avg_macro_jacc:.3f}"
+            f"Macro Jacc: {avg_macro_jacc:.3f} -- "
+            f"Micro Jacc: {avg_micro_jacc:.3f}"
         )
 
     return {"acc_meter": acc_meter, "jacc_meter": jacc_meter}
@@ -125,6 +136,7 @@ def parse_eval_return_meters_with_logging(
     eval_meters: dict[str, Meter],
     model_name: str,
     do_logging: bool = True,
+    log_confusion_matrix: bool = False,
 ) -> dict[str, Any]:
     acc_meter = eval_meters["acc_meter"]
     assert isinstance(acc_meter, AccuracyMeter)
@@ -132,29 +144,46 @@ def parse_eval_return_meters_with_logging(
     assert isinstance(jacc_meter, JaccardScoreMeter)
 
     accuracy = acc_meter.get_average()
-    other_metrics = acc_meter.get_other_classification_metrics("samples")
+    other_metrics = acc_meter.get_other_classification_metrics(
+        average="micro", compute_hamming=True
+    )
     precision = other_metrics["precision"]
     recall = other_metrics["recall"]
     f1 = other_metrics["f1"]
+    hamming = other_metrics["hamming"]
     avg_sample_jacc = jacc_meter.get_average()
     avg_macro_jacc = jacc_meter.get_average("macro")
+    avg_micro_jacc = jacc_meter.get_average("micro")
     assert isinstance(avg_macro_jacc, float)
     assert isinstance(avg_sample_jacc, float)
+    assert isinstance(avg_micro_jacc, float)
 
     return_dict = {
         "accuracy": accuracy,
         "precision": precision,
         "recall": recall,
         "f1": f1,
+        "hamming": hamming,
         "avg_sample_jacc": avg_sample_jacc,
         "avg_macro_jacc": avg_macro_jacc,
+        "avg_micro_jacc": avg_micro_jacc,
     }
     log_info_str = (
         f"{model_name}\n\tAccuracy: {accuracy:.3f}\n"
         f"\tPrecision: {precision:.3f}\n\tRecall: {recall:.3f}\n\tF1: {f1:.3f}"
-        f"\n\tSample Jacc: {avg_sample_jacc:.3f}\n\t"
-        f"Macro Jacc: {avg_macro_jacc:.3f}"
+        f"\n\tHamming: {hamming:.3f}\n\tSample Jacc: {avg_sample_jacc:.3f}\n\t"
+        f"Macro Jacc: {avg_macro_jacc:.3f}\n\tMicro Jacc: {avg_micro_jacc:.3f}"
     )
+
+    if log_confusion_matrix:
+        cf_mtx_list: list[dict[str, int]] = acc_meter.get_confusion_matrix()
+        log_info_str += "\nConfusion Matrix:\n"
+        for k, cf_mtx in enumerate(cf_mtx_list):
+            log_info_str += f"    {k}\t" + "\t".join(
+                [f"{l}: {n}" for l, n in cf_mtx.items()]
+            )
+            if k != len(cf_mtx_list) - 1:
+                log_info_str += "\n"
 
     if do_logging:
         log.info(log_info_str)

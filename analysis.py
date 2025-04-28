@@ -8,6 +8,8 @@ from sklearn.metrics import (
     precision_score,
     recall_score,
     matthews_corrcoef,
+    hamming_loss,
+    multilabel_confusion_matrix,
 )
 import numpy as np
 import torch
@@ -114,7 +116,9 @@ class AccuracyMeter(Meter):
         return {"accuracy": self.get_average()}
 
     def get_other_classification_metrics(
-        self, average: str = "binary"
+        self,
+        average: str = "binary",
+        compute_hamming: bool = False,
     ) -> dict[str, float]:
         return_dict = {
             "precision": float(
@@ -140,12 +144,38 @@ class AccuracyMeter(Meter):
             ),
         }
 
+        if compute_hamming:
+            return_dict["hamming"] = float(
+                hamming_loss(self.targets.int(), self.outputs.int())
+            )
+
         if average == "binary":
             return_dict["mcc"] = float(
                 matthews_corrcoef(self.targets.int(), self.outputs.int())
             )
 
         return return_dict
+
+    def get_confusion_matrix(self) -> list[dict[str, int]]:
+        """
+        Compute confusion matrix for each class
+        """
+        confusion_mtx_list = []
+        full_cf_mtx = multilabel_confusion_matrix(
+            self.targets.int(), self.outputs.int()
+        )
+        for cfm in full_cf_mtx:
+            tn, fp, fn, tp = cfm.ravel()
+            confusion_mtx_list.append(
+                {
+                    "tn": int(tn),
+                    "fp": int(fp),
+                    "fn": int(fn),
+                    "tp": int(tp),
+                }
+            )
+
+        return confusion_mtx_list
 
 
 class JaccardScoreMeter(Meter):
