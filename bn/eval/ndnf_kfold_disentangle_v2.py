@@ -418,6 +418,8 @@ def post_train_disentangle(cfg: DictConfig):
         random_state=eval_cfg["seed"],
     )
 
+    use_full_data = eval_cfg.get("use_full_data", False)
+
     ret_dicts: list[dict[str, Any]] = []
 
     for fold_id, (train_index, test_index) in enumerate(
@@ -443,19 +445,23 @@ def post_train_disentangle(cfg: DictConfig):
         model.eval()
 
         # Data loaders
+        if use_full_data:
+            sampler = torch.utils.data.SubsetRandomSampler(train_index)  # type: ignore
+        else:
+            sampler = None
+
         train_loader = torch.utils.data.DataLoader(
             bn_dataset,
             batch_size=DEFAULT_LOADER_BATCH_SIZE,
             num_workers=DEFAULT_LOADER_NUM_WORKERS,
             pin_memory=device == torch.device("cuda"),
-            sampler=torch.utils.data.SubsetRandomSampler(train_index),  # type: ignore
+            sampler=sampler,
         )
         val_loader = torch.utils.data.DataLoader(
             bn_dataset,
             batch_size=DEFAULT_LOADER_BATCH_SIZE,
             num_workers=DEFAULT_LOADER_NUM_WORKERS,
             pin_memory=device == torch.device("cuda"),
-            sampler=torch.utils.data.SubsetRandomSampler(test_index),  # type: ignore
         )
 
         log.info(f"Experiment {model_dir.name} loaded!")

@@ -129,7 +129,6 @@ def post_train_prune(cfg: DictConfig) -> None:
             batch_size=DEFAULT_LOADER_BATCH_SIZE,
             num_workers=DEFAULT_LOADER_NUM_WORKERS,
             pin_memory=device == torch.device("cuda"),
-            sampler=torch.utils.data.SubsetRandomSampler(test_index),  # type: ignore
         )
 
         log.info(f"Experiment {model_dir.name} loaded!")

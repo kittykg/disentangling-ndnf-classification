@@ -205,8 +205,6 @@ def asp_eval(
     acc_meter.update(prediction_tensor.int(), ground_truth_tensor)
     jacc_meter.update(prediction_tensor.int(), ground_truth_tensor)
 
-    print(acc_meter.targets[:4], acc_meter.outputs[:4])
-
     return {"acc_meter": acc_meter, "jacc_meter": jacc_meter}
 
 
