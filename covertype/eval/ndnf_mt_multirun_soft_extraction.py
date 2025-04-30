@@ -80,6 +80,8 @@ SOFT_EXTRCT_DISENTANGLED_RESULT_JSON_BASE_NAME = (
     "soft_extract_disentangled_result"
 )
 
+DEFAULT_COMPUTE_ERROR_DICT = False
+
 
 class BaseChainedNeuralDNF(CoverTypeBaseNeuralDNF):
     sub_ndnf: NeuralDNF
@@ -166,52 +168,72 @@ def threshold_conjunctive_layer(
             (torch.abs(og_conj_weight) > v) * torch.sign(og_conj_weight) * 6.0
         )
         threshold_eval_dict = covertype_classifier_eval(
-            model, device, train_loader
+            model,
+            device,
+            train_loader,
+            compute_error_dict=DEFAULT_COMPUTE_ERROR_DICT,
         )
         acc_meter = threshold_eval_dict["acc_meter"]
         jacc_meter = threshold_eval_dict["jacc_meter"]
-        error_meter = threshold_eval_dict["error_meter"]
         assert isinstance(acc_meter, AccuracyMeter)
         assert isinstance(jacc_meter, JaccardScoreMeter)
-        assert isinstance(error_meter, ErrorMeter)
         accuracy = acc_meter.get_average()
+        f1 = acc_meter.get_other_classification_metrics("weighted")["f1"]
+        assert isinstance(f1, float)
         sample_jacc = jacc_meter.get_average("samples")
         macro_jacc = jacc_meter.get_average("macro")
         assert isinstance(sample_jacc, float)
         assert isinstance(macro_jacc, float)
-        overall_error_rate = error_meter.get_average()["overall_error_rate"]
+        if DEFAULT_COMPUTE_ERROR_DICT:
+            error_meter = threshold_eval_dict["error_meter"]
+            assert isinstance(error_meter, ErrorMeter)
+            overall_error_rate = error_meter.get_average()["overall_error_rate"]
 
         result_dicts_with_t_val.append(
             {
                 "t_val": v.item(),
                 "accuracy": accuracy,
+                "f1": f1,
                 "sample_jacc": sample_jacc,
                 "macro_jacc": macro_jacc,
-                "overall_error_rate": overall_error_rate,
             }
         )
+        if DEFAULT_COMPUTE_ERROR_DICT:
+            assert isinstance(overall_error_rate, float)
+            result_dicts_with_t_val[-1][
+                "overall_error_rate"
+            ] = overall_error_rate
 
-    sorted_result_dicts: list[dict[str, float]] = sorted(
-        result_dicts_with_t_val,
-        key=lambda x: (
+    if DEFAULT_COMPUTE_ERROR_DICT:
+        sort_fn = lambda x: (
+            x["f1"],
             -x["overall_error_rate"],
             x["sample_jacc"],
             x["accuracy"],
-        ),
+        )
+    else:
+        sort_fn = lambda x: (x["f1"], x["accuracy"], x["sample_jacc"])
+    sorted_result_dicts: list[dict[str, float]] = sorted(
+        result_dicts_with_t_val,
+        key=sort_fn,
         reverse=True,
     )
 
     if do_logging:
         log.info("Top 5 thresholding candidates:")
         for i, d in enumerate(sorted_result_dicts[:5]):
-            log.info(
+            log_info_str = (
                 f"-- Candidate {i + 1} --\n"
                 f"\tt_val: {d['t_val']:.2f}  "
                 f"Acc: {d['accuracy']:.3f}  "
+                f"F1: {d['f1']:.3f}  "
                 f"Sample Jacc: {d['sample_jacc']:.3f}  "
-                f"Macro Jacc: {d['macro_jacc']:.3f}  "
-                f"Overall Error Rate: {d['overall_error_rate']:.3f}"
+                f"Macro Jacc: {d['macro_jacc']:.3f}"
             )
+            if DEFAULT_COMPUTE_ERROR_DICT:
+                log_info_str += (
+                    f"  Overall Error Rate: {d['overall_error_rate']:.3f}"
+                )
 
     # Apply the best threshold
     best_t_val = sorted_result_dicts[0]["t_val"]
@@ -226,8 +248,14 @@ def threshold_conjunctive_layer(
 
 def disentangle_conjunctive_layer(
     model: CoverTypeNeuralDNF,
+    positive_j_minus_limit: int = -1,
+    negative_j_minus_limit: int = -1,
 ) -> BaseChainedNeuralDNF:
-    log.info("Disentangling the model...")
+    log.info(
+        "Disentangling the model with positive j_minus_limit: "
+        f"{positive_j_minus_limit}, negative j_minus_limit: "
+        f"{negative_j_minus_limit}"
+    )
 
     # Remember the disjunction-conjunction mapping
     conj_w = model.ndnf.conjunctions.weights.data.clone().detach().cpu()
@@ -250,7 +278,11 @@ def disentangle_conjunctive_layer(
     # split the conjunctions
     splitted_conj: dict[int, list[Tensor]] = dict()
     for conj_id in unique_conj_ids:
-        ret = split_entangled_conjunction(conj_w[conj_id])
+        ret = split_entangled_conjunction(
+            conj_w[conj_id],
+            positive_disentangle_j_minus_limit=positive_j_minus_limit,
+            negative_disentangle_j_minus_limit=negative_j_minus_limit,
+        )
 
         if ret is None:
             log.info(f"Conj {conj_id} is skipped")
@@ -328,8 +360,14 @@ def prune_chained_ndnf(
     eval_log_fn: Callable[[dict[str, Any]], dict[str, float]],
 ) -> int:
     prune_eval_fn = lambda: parse_eval_return_meters_with_logging(
-        covertype_classifier_eval(chained_ndnf, device, train_loader),
+        covertype_classifier_eval(
+            chained_ndnf,
+            device,
+            train_loader,
+            compute_error_dict=DEFAULT_COMPUTE_ERROR_DICT,
+        ),
         model_name="Prune (intermediate)",
+        check_error_meter=DEFAULT_COMPUTE_ERROR_DICT,
         do_logging=False,
     )
 
@@ -368,8 +406,8 @@ def prune_chained_ndnf(
         log.info(f"Prune iteraiton {prune_iteration}")
         start_time = datetime.now()
 
-        # Prune the disjunctive layer first
-        disj_pruned_count = prune_disjunctive_layer()
+        # Prune the disjunctive layer, commented out for now
+        # disj_pruned_count = prune_disjunctive_layer()
 
         # Prune the conjunctive DNF next
         prune_result_dict_conj = prune_neural_dnf(
@@ -391,7 +429,7 @@ def prune_chained_ndnf(
 
         end_time = datetime.now()
         log.info(f"\tTime taken: {end_time - start_time}")
-        log.info(f"\tDisjunctive prune count: {disj_pruned_count}")
+        # log.info(f"\tDisjunctive prune count: {disj_pruned_count}")
         log.info(
             f"\tPruned disjunction count: {prune_result_dict_conj['disj_prune_count_1']}"
         )
@@ -410,7 +448,7 @@ def prune_chained_ndnf(
         # continue pruning
         if (
             any([prune_result_dict_conj[k] != 0 for k in important_keys])
-            or disj_pruned_count != 0
+            # or disj_pruned_count != 0
         ):
             prune_iteration += 1
         else:
@@ -427,12 +465,22 @@ def single_model_soft_extract(
     test_loader: DataLoader,
     model_dir: Path,
     conjunctive_layer_process_method: str = "threshold",
+    limit_split: int = -1,
 ) -> dict[str, Any]:
     def _eval_with_log_wrapper(
         model_name: str, data_loader: DataLoader = val_loader
     ) -> dict[str, float]:
-        eval_meters = covertype_classifier_eval(model, device, data_loader)
-        return parse_eval_return_meters_with_logging(eval_meters, model_name)
+        eval_meters = covertype_classifier_eval(
+            model,
+            device,
+            data_loader,
+            compute_error_dict=DEFAULT_COMPUTE_ERROR_DICT,
+        )
+        return parse_eval_return_meters_with_logging(
+            eval_meters,
+            model_name,
+            check_error_meter=DEFAULT_COMPUTE_ERROR_DICT,
+        )
 
     # Stage 1: Evaluate the pruned model
     prune_log = _eval_with_log_wrapper(
@@ -508,7 +556,7 @@ def single_model_soft_extract(
             chained_model.load_state_dict(sd)
             log.info("Loaded the temp chained model")
         else:
-            chained_model = disentangle_conjunctive_layer(model)
+            chained_model = disentangle_conjunctive_layer(model, limit_split)
             torch.save(chained_model.state_dict(), "temp_chained.pth")
 
         log.info(chained_model)
@@ -531,8 +579,14 @@ def single_model_soft_extract(
         #     print(test)
 
         intermediate_pre_prune_log = parse_eval_return_meters_with_logging(
-            covertype_classifier_eval(chained_model, device, val_loader),
+            covertype_classifier_eval(
+                chained_model,
+                device,
+                val_loader,
+                compute_error_dict=DEFAULT_COMPUTE_ERROR_DICT,
+            ),
             model_name="Pre-prune chained NDNF model (val)",
+            check_error_meter=DEFAULT_COMPUTE_ERROR_DICT,
         )
         log.info("------------------------------------------")
 
@@ -544,14 +598,26 @@ def single_model_soft_extract(
             device,
             train_loader,
             lambda x: parse_eval_return_meters_with_logging(
-                covertype_classifier_eval(chained_model, device, val_loader),
+                covertype_classifier_eval(
+                    chained_model,
+                    device,
+                    val_loader,
+                    compute_error_dict=DEFAULT_COMPUTE_ERROR_DICT,
+                ),
                 model_name=x["model_name"],
+                check_error_meter=DEFAULT_COMPUTE_ERROR_DICT,
             ),
         )
 
         pruned_chained_ndnf_log = parse_eval_return_meters_with_logging(
-            covertype_classifier_eval(chained_model, device, val_loader),
+            covertype_classifier_eval(
+                chained_model,
+                device,
+                val_loader,
+                compute_error_dict=DEFAULT_COMPUTE_ERROR_DICT,
+            ),
             model_name="Pruned chained NDNF model (val)",
+            check_error_meter=DEFAULT_COMPUTE_ERROR_DICT,
         )
         log.info("------------------------------------------")
 
@@ -623,8 +689,14 @@ def single_model_soft_extract(
         chained_model.eval()
 
         pruned_chained_ndnf_log = parse_eval_return_meters_with_logging(
-            covertype_classifier_eval(chained_model, device, test_loader),
+            covertype_classifier_eval(
+                chained_model,
+                device,
+                test_loader,
+                compute_error_dict=DEFAULT_COMPUTE_ERROR_DICT,
+            ),
             "Pruned chained NDNF model(test)",
+            check_error_meter=DEFAULT_COMPUTE_ERROR_DICT,
         )
     else:
         ret = process_conjunctive_layer_disentangle()
@@ -633,8 +705,14 @@ def single_model_soft_extract(
 
         torch.save(chained_model.state_dict(), model_path)
         pruned_chained_ndnf_log = parse_eval_return_meters_with_logging(
-            covertype_classifier_eval(chained_model, device, test_loader),
+            covertype_classifier_eval(
+                chained_model,
+                device,
+                test_loader,
+                compute_error_dict=DEFAULT_COMPUTE_ERROR_DICT,
+            ),
             "Pruned chained NDNF model (test)",
+            check_error_meter=DEFAULT_COMPUTE_ERROR_DICT,
         )
 
         disentanglement_result = {
@@ -763,6 +841,7 @@ def multirun_soft_extraction(cfg: DictConfig) -> None:
                 conjunctive_layer_process_method=eval_cfg[
                     "discretisation_method"
                 ],
+                limit_split=eval_cfg.get("limit_split", -1),
             )
         )
         log.info("============================================================")
@@ -830,4 +909,8 @@ def run_eval(cfg: DictConfig) -> None:
 
 
 if __name__ == "__main__":
+    import warnings
+
+    warnings.filterwarnings("ignore")
+
     run_eval()
