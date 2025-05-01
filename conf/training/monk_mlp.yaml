@@ -1,0 +1,26 @@
+experiment_name: monk_mlp_l32_b32_e200
+seed: null
+
+use_cuda: True
+use_mps: False
+
+log_interval: 100
+
+val_size: 0.15
+
+model_type: mlp
+model_architecture:
+  num_features: 32
+
+optimiser: adam
+
+optimiser_lr: 0.003
+optimiser_weight_decay: 0.0001
+scheduler_step: 113
+loss_func: bce_logit
+batch_size: 32
+loader_num_workers: 0
+epochs: 200
+
+aux_loss:
+  weight_l1_mod_lambda: 1e-3

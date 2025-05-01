@@ -1,0 +1,11 @@
+experiment_name: monk_mlp_l32_b32_e200
+multirun_seeds: [689, 1852, 1880, 2272, 3046, 3150, 3486, 4822, 5008, 5484, 6355, 6741, 7681, 8748, 9518, 9908]
+
+use_cuda: True
+use_mps: False
+
+model_type: mlp
+model_architecture:
+  num_features: 32
+
+storage_dir: ??? # overwrite this
