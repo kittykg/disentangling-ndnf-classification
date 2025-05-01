@@ -1,0 +1,32 @@
+experiment_name: monk_ndnf_nc32_b32_e200
+seed: null
+
+use_cuda: True
+use_mps: False
+
+log_interval: 100
+
+val_size: 0.15
+
+model_type: ndnf
+model_architecture:
+  n_conjunctions: 32
+
+optimiser: adam
+optimiser_lr: 0.003
+optimiser_weight_decay: 0.0001
+scheduler_step: 113
+loss_func: bce
+batch_size: 32
+loader_num_workers: 0
+epochs: 200
+
+dds:
+  initial_delta: 0.1
+  delta_decay_delay: 5
+  delta_decay_steps: 1
+  delta_decay_rate: 1.1
+
+aux_loss:
+  weight_l1_mod_lambda: 1e-5
+  tanh_conj_lambda: 1e-5

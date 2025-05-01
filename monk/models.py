@@ -1,0 +1,88 @@
+from omegaconf import DictConfig
+import torch
+import torch.nn as nn
+from torch import Tensor
+
+from neural_dnf import NeuralDNF
+
+
+class MonkClassifier(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x: Tensor) -> Tensor:
+        raise NotImplementedError
+
+    def get_weight_reg_loss(self) -> Tensor:
+        raise NotImplementedError
+
+
+class MonkMLP(MonkClassifier):
+    def __init__(self, num_features: int):
+        super().__init__()
+
+        self.mlp = nn.Sequential(
+            nn.Linear(num_features, 64),
+            nn.Tanh(),
+            nn.Linear(64, 1),
+        )
+
+    def forward(self, x: Tensor) -> Tensor:
+        return self.mlp(x)
+
+    def get_weight_reg_loss(self) -> Tensor:
+        # L1 regularisation
+        p_t = torch.cat(
+            [
+                parameter.view(-1)
+                for parameter in self.parameters()
+                if parameter.requires_grad
+            ]
+        )
+        return p_t.abs().mean()
+
+
+class MonkNeuralDNF(MonkClassifier):
+    def __init__(self, num_features: int, num_conjunctions: int):
+        super().__init__()
+
+        self.ndnf = NeuralDNF(
+            n_in=num_features,
+            n_conjunctions=num_conjunctions,
+            n_out=1,
+            delta=1.0,
+        )
+
+    def get_conjunction(self, x: Tensor) -> Tensor:
+        # x: B x P
+        return self.ndnf.get_conjunction(x)
+
+    def forward(self, x: Tensor) -> Tensor:
+        # x: B x P
+        return self.ndnf(x)
+
+    def get_weight_reg_loss(self, take_mean: bool = True) -> Tensor:
+        p_t = torch.cat(
+            [
+                parameter.view(-1)
+                for parameter in self.ndnf.parameters()
+                if parameter.requires_grad
+            ]
+        )
+        reg_loss = torch.abs(p_t * (6 - torch.abs(p_t)))
+        if take_mean:
+            return reg_loss.mean()
+        return reg_loss
+
+    def change_ndnf(self, new_ndnf: NeuralDNF):
+        self.ndnf = new_ndnf
+
+
+def construct_model(cfg: DictConfig, num_features: int) -> MonkClassifier:
+    if cfg["model_type"] == "ndnf":
+        return MonkNeuralDNF(
+            num_features=num_features,
+            num_conjunctions=cfg["model_architecture"]["n_conjunctions"],
+        )
+
+    return MonkMLP(num_features=num_features)
