@@ -169,6 +169,10 @@ def single_model_threshold(
             device,
             train_loader,
             lambda x: _eval_with_log_wrapper(x["model_name"]),
+            prune_options={
+                "skip_prune_disj_with_empty_conj": False,
+                "skip_last_prune_disj": True,
+            },
         )
         threshold_final_log = _eval_with_log_wrapper(
             f"Thresholded NDNF model (t={best_t_val}) after final prune"

@@ -153,6 +153,10 @@ def single_model_disentangle(
             device,
             train_loader,
             lambda x: _eval_with_log_wrapper(model, x["model_name"]),
+            prune_options={
+                "skip_prune_disj_with_empty_conj": False,
+                "skip_last_prune_disj": True,
+            },
         )
         pruned_inter_model_log = _eval_with_log_wrapper(
             model, "Disentangled NDNF model (intermediate, pruned)"

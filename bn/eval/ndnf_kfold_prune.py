@@ -60,6 +60,10 @@ def multiround_prune(
     device: torch.device,
     train_loader: DataLoader,
     eval_log_fn: Callable[[dict[str, Any]], dict[str, float]],
+    prune_options: dict[str, Any] = {
+        "skip_prune_disj_with_empty_conj": True,
+        "skip_last_prune_disj": True,
+    },
 ) -> int:
     def comparison_fn(og_parsed_eval_log, new_parsed_eval_log):
         for k in ["precision", "recall", "f1", "avg_sample_jacc"]:
@@ -89,18 +93,16 @@ def multiround_prune(
             prune_eval_function,
             {},
             comparison_fn,
-            options={
-                "skip_prune_disj_with_empty_conj": True,
-                "skip_last_prune_disj": True,
-            },
+            options=prune_options,
         )
 
         important_keys = [
             "disj_prune_count_1",
             "unused_conjunctions_2",
             "conj_prune_count_3",
-            # "prune_disj_with_empty_conj_count_4",
         ]
+        if not prune_options["skip_prune_disj_with_empty_conj"]:
+            important_keys.append("prune_disj_with_empty_conj_count_4")
 
         end_time = datetime.now()
         log.info(f"\tTime taken: {end_time - start_time}")
@@ -113,9 +115,10 @@ def multiround_prune(
         log.info(
             f"\tPruned conjunction count: {prune_result_dict['conj_prune_count_3']}"
         )
-        # log.info(
-        #     f"\tPruned disj with empty conj: {prune_result_dict['prune_disj_with_empty_conj_count_4']}"
-        # )
+        if not prune_options["skip_prune_disj_with_empty_conj"]:
+            log.info(
+                f"\tPruned disj with empty conj: {prune_result_dict['prune_disj_with_empty_conj_count_4']}"
+            )
 
         eval_log_fn(
             {"model_name": f"Plain NDNF - (Prune iteration: {prune_iteration})"}
