@@ -55,6 +55,16 @@ from bn.models import BooleanNetworkNeuralDNF, construct_model
 log = logging.getLogger()
 
 
+def comparison_fn(og_parsed_eval_log, new_parsed_eval_log):
+    for k in ["precision", "recall", "f1", "avg_sample_jacc"]:
+        if new_parsed_eval_log[k] < og_parsed_eval_log[k]:
+            return False
+    # compare hamming loss
+    if new_parsed_eval_log["hamming"] > og_parsed_eval_log["hamming"]:
+        return False
+    return True
+
+
 def multiround_prune(
     model: BooleanNetworkNeuralDNF,
     device: torch.device,
@@ -65,15 +75,6 @@ def multiround_prune(
         "skip_last_prune_disj": True,
     },
 ) -> int:
-    def comparison_fn(og_parsed_eval_log, new_parsed_eval_log):
-        for k in ["precision", "recall", "f1", "avg_sample_jacc"]:
-            if new_parsed_eval_log[k] < og_parsed_eval_log[k]:
-                return False
-        # compare hamming loss
-        if new_parsed_eval_log["hamming"] > og_parsed_eval_log["hamming"]:
-            return False
-        return True
-
     prune_iteration = 1
 
     prune_eval_function = lambda: parse_eval_return_meters_with_logging(

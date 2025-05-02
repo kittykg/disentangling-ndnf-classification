@@ -1,9 +1,9 @@
 """
-This script disentangle pruned plain NDNF. The input NDNF models are strictly
-after pruning stage in the post-training processing pipeline. The disentangled
-NDNF model are stored and evaluated, with the relevant information stored in a
-json. The evaluation metrics include accuracy, sample Jaccard, macro Jaccard,
-and error metrics.
+This script disentangle pruned NDNF in a BooleanNetwork NeuralDNF model. The
+input model's NDNF models are strictly after pruning stage in the post-training
+processing pipeline. The BooleanNetwork NeuralDNF models with their NDNF models
+disentangled are stored and evaluated, with the relevant information stored in a
+json. The evaluation metrics include accuracy, precision, recall, and F1 score.
 
 The difference between this script and the previous version is that instead of
 re-wiring all the new conjunctions to corresponding disjunctive nodes with
@@ -23,11 +23,12 @@ from typing import Any, Callable
 import hydra
 import numpy as np
 from omegaconf import DictConfig
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import KFold
 import torch
+from torch import Tensor
 from torch.utils.data import DataLoader
 
-from neural_dnf import NeuralDNF, NeuralDNFEO
+from neural_dnf import NeuralDNF
 from neural_dnf.post_training import (
     split_entangled_conjunction,
     split_entangled_disjunction,
@@ -45,9 +46,13 @@ except ValueError:  # Already removed
 
 from analysis import synthesize
 from utils import post_to_discord_webhook
-from zoo.data_utils_zoo import *
-from zoo.eval.ndnf_eval_common import (
-    ndnf_based_model_eval,
+
+from bn.data_utils_bn import (
+    get_boolean_network_full_data_np_from_path,
+    BooleanNetworkDataset,
+)
+from bn.eval.eval_common import (
+    boolean_network_classifier_eval,
     parse_eval_return_meters_with_logging,
     DEFAULT_GEN_SEED,
     DEFAULT_LOADER_BATCH_SIZE,
@@ -57,24 +62,26 @@ from zoo.eval.ndnf_eval_common import (
     DISENTANGLED_MODEL_BASE_NAME,
     DISENTANGLED_RESULT_JSON_BASE_NAME,
 )
-from zoo.eval.ndnf_eo_kfold_prune import comparison_fn
-from zoo.train_zoo import construct_model
+from bn.eval.ndnf_kfold_prune import comparison_fn
+from bn.models import BooleanNetworkNeuralDNF, construct_model
 
 
 log = logging.getLogger()
 
 
-class ChainedNDNF(torch.nn.Module):
-    sub_ndnf: NeuralDNF
+class BooleanNetworkChainedNeuralDNF(BooleanNetworkNeuralDNF):
+    # this model will never be used for training
+    sub_ndnf_conj: NeuralDNF
     sub_ndnf_disj: NeuralDNF
 
-    def __init__(self, sub_ndnf, sub_ndnf_disj):
-        super().__init__()
-        self.sub_ndnf = sub_ndnf
+    def __init__(self, sub_ndnf_conj: NeuralDNF, sub_ndnf_disj: NeuralDNF):
+        super().__init__(1, 1, 1)  # placeholder values
+        self.sub_ndnf_conj = sub_ndnf_conj
         self.sub_ndnf_disj = sub_ndnf_disj
 
-    def forward(self, x):
-        return self.sub_ndnf_disj(self.sub_ndnf(x))
+    def forward(self, x: Tensor) -> Tensor:
+        aux_c = torch.tanh(self.sub_ndnf_conj(x))
+        return self.sub_ndnf_disj(aux_c)
 
 
 def create_sub_models(model: NeuralDNF) -> tuple[NeuralDNF, NeuralDNF]:
@@ -215,13 +222,13 @@ def create_sub_models(model: NeuralDNF) -> tuple[NeuralDNF, NeuralDNF]:
 
 
 def prune_chained_ndnf(
-    chained_ndnf: ChainedNDNF,
+    chained_ndnf: BooleanNetworkChainedNeuralDNF,
     device: torch.device,
     train_loader: DataLoader,
     eval_log_fn: Callable[[dict[str, Any]], dict[str, float]],
 ) -> int:
     prune_eval_fn = lambda: parse_eval_return_meters_with_logging(
-        ndnf_based_model_eval(chained_ndnf, device, train_loader),  # type: ignore
+        boolean_network_classifier_eval(chained_ndnf, device, train_loader),
         model_name="Prune (intermediate)",
         do_logging=False,
     )
@@ -229,30 +236,30 @@ def prune_chained_ndnf(
     prune_iteration = 1
     continue_pruning = True
     while continue_pruning:
-        print(f"Prune iteraiton {prune_iteration}")
+        log.info(f"Prune iteration {prune_iteration}")
         start_time = datetime.now()
 
-        # Prune the disjunctive DNF first
-        prune_result_dict_disj = prune_neural_dnf(
-            chained_ndnf.sub_ndnf_disj,
-            prune_eval_fn,
-            {},
-            comparison_fn,
-            options={
-                "skip_prune_disj_with_empty_conj": True,
-                "skip_last_prune_disj": True,
-            },
-        )
-
-        # Prune the conjunctive DNF next
+        # Prune the conjunctive DNF first
         prune_result_dict_conj = prune_neural_dnf(
-            chained_ndnf.sub_ndnf,
+            chained_ndnf.sub_ndnf_conj,
             prune_eval_fn,
             {},
             comparison_fn,
             options={
                 "skip_prune_disj_with_empty_conj": False,
                 "skip_last_prune_conj": True,
+            },
+        )
+
+        # Prune the disjunctive DNF next
+        prune_result_dict_disj = prune_neural_dnf(
+            chained_ndnf.sub_ndnf_disj,
+            prune_eval_fn,
+            {},
+            comparison_fn,
+            options={
+                "skip_prune_disj_with_empty_conj": False,
+                "skip_last_prune_disj": True,
             },
         )
 
@@ -263,19 +270,18 @@ def prune_chained_ndnf(
         ]
 
         end_time = datetime.now()
-        print(f"\tTime taken: {end_time - start_time}")
+        log.info(f"\tTime taken: {end_time - start_time}")
         for d in [prune_result_dict_disj, prune_result_dict_conj]:
-            print(f"\tPruned disjunction count: {d['disj_prune_count_1']}")
-            print(
+            log.info(f"\tPruned disjunction count: {d['disj_prune_count_1']}")
+            log.info(
                 f"\tRemoved unused conjunction count: {d['unused_conjunctions_2']}"
             )
-            print(f"\tPruned conjunction count: {d['conj_prune_count_3']}")
-            print()
+            log.info(f"\tPruned conjunction count: {d['conj_prune_count_3']}\n")
 
         eval_log_fn(
             {"model_name": f"Pruned chained NDNF - (Iter: {prune_iteration})"}
         )
-        print("..................................")
+        log.info("..................................")
         # If any of the important keys has the value not 0, then we should
         # continue pruning
         continue_pruning = False
@@ -290,7 +296,7 @@ def prune_chained_ndnf(
 
 def single_model_disentangle(
     fold_id: int,
-    model: NeuralDNF,
+    model: BooleanNetworkNeuralDNF,
     device: torch.device,
     train_loader: DataLoader,
     val_loader: DataLoader,
@@ -298,25 +304,40 @@ def single_model_disentangle(
 ) -> dict[str, Any]:
     # Stage 1: Evaluate the pruned model
     parse_eval_return_meters_with_logging(
-        ndnf_based_model_eval(model, device, val_loader),
+        boolean_network_classifier_eval(model, device, val_loader),
         model_name="Pruned NDNF model (val)",
+        log_confusion_matrix=True,
     )
     log.info("------------------------------------------")
 
     # Stage 2: Disentangle the pruned model
-    def disentangle(model: NeuralDNF) -> dict[str, Any]:
+    def disentangle(model: BooleanNetworkNeuralDNF) -> dict[str, Any]:
         log.info("Disentangling the model...")
 
         # Create the sub models
-        sub_ndnf_conj, sub_ndnf_disj = create_sub_models(model)
+        sub_ndnf_conj, sub_ndnf_disj = create_sub_models(model.ndnf)
+
+        torch.save(
+            sub_ndnf_conj.state_dict(),
+            model_dir
+            / f"{INTERMEDIATE_DISENTANGLED_MODEL_BASE_NAME}_v3_sub_conj_fold_{fold_id}.pth",
+        )
+        torch.save(
+            sub_ndnf_disj.state_dict(),
+            model_dir
+            / f"{INTERMEDIATE_DISENTANGLED_MODEL_BASE_NAME}_v3_sub_disj_fold_{fold_id}.pth",
+        )
 
         # Create the chained model
-        chained_ndnf = ChainedNDNF(sub_ndnf_conj, sub_ndnf_disj)
+        chained_ndnf = BooleanNetworkChainedNeuralDNF(
+            sub_ndnf_conj, sub_ndnf_disj
+        )
         chained_ndnf.to(device)
         chained_ndnf.eval()
         intermediate_pre_prune_log = parse_eval_return_meters_with_logging(
-            ndnf_based_model_eval(model, device, val_loader),
+            boolean_network_classifier_eval(chained_ndnf, device, val_loader),
             model_name="Pre-prune chained NDNF model (val)",
+            log_confusion_matrix=True,
         )
         log.info("------------------------------------------")
 
@@ -326,24 +347,28 @@ def single_model_disentangle(
             device,
             train_loader,
             lambda x: parse_eval_return_meters_with_logging(
-                ndnf_based_model_eval(chained_ndnf, device, val_loader),  # type: ignore
+                boolean_network_classifier_eval(
+                    chained_ndnf, device, val_loader
+                ),
                 model_name=x["model_name"],
+                log_confusion_matrix=True,
             ),
         )
 
         pruned_chained_ndnf_log = parse_eval_return_meters_with_logging(
-            ndnf_based_model_eval(chained_ndnf, device, val_loader),  # type: ignore
+            boolean_network_classifier_eval(chained_ndnf, device, val_loader),
             model_name="Pruned chained NDNF model (val)",
+            log_confusion_matrix=True,
         )
         log.info("------------------------------------------")
 
         return {
             "intermediate_pre_prune_log": intermediate_pre_prune_log,
             "pruned_chained_ndnf_log": pruned_chained_ndnf_log,
-            "sub_ndnf_conj": chained_ndnf.sub_ndnf,
-            "sub_ndnf_conj_in": chained_ndnf.sub_ndnf.conjunctions.in_features,
-            "sub_ndnf_conj_n_conjunctions": chained_ndnf.sub_ndnf.conjunctions.out_features,
-            "sub_ndnf_conj_out": chained_ndnf.sub_ndnf.disjunctions.out_features,
+            "sub_ndnf_conj": chained_ndnf.sub_ndnf_conj,
+            "sub_ndnf_conj_in": chained_ndnf.sub_ndnf_conj.conjunctions.in_features,
+            "sub_ndnf_conj_n_conjunctions": chained_ndnf.sub_ndnf_conj.conjunctions.out_features,
+            "sub_ndnf_conj_out": chained_ndnf.sub_ndnf_conj.disjunctions.out_features,
             "sub_ndnf_disj": chained_ndnf.sub_ndnf_disj,
             "sub_ndnf_disj_in": chained_ndnf.sub_ndnf_disj.conjunctions.in_features,
             "sub_ndnf_disj_n_conjunctions": chained_ndnf.sub_ndnf_disj.conjunctions.out_features,
@@ -360,7 +385,7 @@ def single_model_disentangle(
         / f"fold_{fold_id}_{DISENTANGLED_RESULT_JSON_BASE_NAME}_v3.json"
     )
     if model_path.exists() and disentangle_result_json.exists():
-        # The model has been disentangled, pruned and condensed
+        # The model has been disentangled and pruned
         with open(disentangle_result_json, "r") as f:
             stats = json.load(f)
 
@@ -377,17 +402,20 @@ def single_model_disentangle(
             1.0,
         )
 
-        chained_ndnf = ChainedNDNF(sub_ndnf_conj, sub_ndnf_disj)
+        chained_ndnf = BooleanNetworkChainedNeuralDNF(
+            sub_ndnf_conj, sub_ndnf_disj
+        )
         chained_ndnf.to(device)
         chained_ndnf.eval()
-        chanied_ndnf_state = torch.load(
+        chained_ndnf_state = torch.load(
             model_path, map_location=device, weights_only=True
         )
-        chained_ndnf.load_state_dict(chanied_ndnf_state)
+        chained_ndnf.load_state_dict(chained_ndnf_state)
 
         final_chained_ndnf_log = parse_eval_return_meters_with_logging(
-            ndnf_based_model_eval(chained_ndnf, device, val_loader),  # type: ignore
+            boolean_network_classifier_eval(chained_ndnf, device, val_loader),
             model_name="Final chained NDNF model (val)",
+            log_confusion_matrix=True,
         )
     else:
         ret = disentangle(model)
@@ -395,16 +423,6 @@ def single_model_disentangle(
         sub_ndnf_disj = ret["sub_ndnf_disj"]
         chained_ndnf = ret["chained_ndnf"]
 
-        torch.save(
-            sub_ndnf_conj.state_dict(),
-            model_dir
-            / f"{INTERMEDIATE_DISENTANGLED_MODEL_BASE_NAME}_v3_sub_conj_fold_{fold_id}.pth",
-        )
-        torch.save(
-            sub_ndnf_disj.state_dict(),
-            model_dir
-            / f"{INTERMEDIATE_DISENTANGLED_MODEL_BASE_NAME}_v3_sub_disj_fold_{fold_id}.pth",
-        )
         torch.save(chained_ndnf.state_dict(), model_path)
 
         disentanglement_result = {
@@ -452,20 +470,25 @@ def post_train_disentangle(cfg: DictConfig):
     log.info(f"Device: {device}")
 
     # Load data
-    X, y, _ = get_zoo_data_np_from_path(
-        data_dir_path=Path(cfg["dataset"]["save_dir"])
+    bn_dataset = BooleanNetworkDataset(
+        dataset_type=cfg["dataset"]["dataset_name"],
+        subtype=None,
+        data=get_boolean_network_full_data_np_from_path(cfg["dataset"]),
     )
-    dataset = ZooDataset(X, y)
 
-    # Stratified K-Fold
-    skf = StratifiedKFold(
+    # K-Fold
+    kf = KFold(
         n_splits=eval_cfg["k_folds"],
         shuffle=True,
         random_state=eval_cfg["seed"],
     )
 
+    use_full_data = eval_cfg.get("use_full_data", False)
+
     ret_dicts: list[dict[str, float]] = []
-    for fold_id, (train_index, test_index) in enumerate(skf.split(X, y)):
+    for fold_id, (train_index, test_index) in enumerate(
+        kf.split(np.arange(len(bn_dataset)))
+    ):
         log.info(f"Fold {fold_id} starts")
         # Load model
         model_dir = (
@@ -476,24 +499,32 @@ def post_train_disentangle(cfg: DictConfig):
         )
         assert pruned_pth.exists(), f"Model {model_dir.name} not pruned!"
 
-        model = construct_model(eval_cfg)
-        assert isinstance(model, NeuralDNFEO)
-
-        model = model.to_ndnf()
+        model = construct_model(eval_cfg, bn_dataset.data.shape[2])
+        assert isinstance(model, BooleanNetworkNeuralDNF)
         model.to(device)
-        model.eval()
         model_state = torch.load(
             pruned_pth, map_location=device, weights_only=True
         )
         model.load_state_dict(model_state)
+        model.eval()
 
         # Data loaders
-        train_loader, val_loader = get_zoo_dataloaders(
-            dataset=dataset,
-            train_index=train_index,
-            test_index=test_index,
+        if use_full_data:
+            sampler = torch.utils.data.SubsetRandomSampler(train_index)  # type: ignore
+        else:
+            sampler = None
+
+        train_loader = torch.utils.data.DataLoader(
+            bn_dataset,
             batch_size=DEFAULT_LOADER_BATCH_SIZE,
-            loader_num_workers=DEFAULT_LOADER_NUM_WORKERS,
+            num_workers=DEFAULT_LOADER_NUM_WORKERS,
+            pin_memory=device == torch.device("cuda"),
+            sampler=sampler,
+        )
+        val_loader = torch.utils.data.DataLoader(
+            bn_dataset,
+            batch_size=DEFAULT_LOADER_BATCH_SIZE,
+            num_workers=DEFAULT_LOADER_NUM_WORKERS,
             pin_memory=device == torch.device("cuda"),
         )
 
@@ -554,7 +585,7 @@ def run_eval(cfg: DictConfig) -> None:
             webhook_url = cfg["webhook"]["discord_webhook_url"]
             post_to_discord_webhook(
                 webhook_url=webhook_url,
-                experiment_name=f"{cfg['eval']['experiment_name']} Kfold Disentangle V2",
+                experiment_name=f"{cfg['eval']['experiment_name']} Kfold Disentangle V3",
                 message_body=msg_body,
                 errored=errored,
                 keyboard_interrupt=keyboard_interrupt,
@@ -562,4 +593,8 @@ def run_eval(cfg: DictConfig) -> None:
 
 
 if __name__ == "__main__":
+    import warnings
+
+    warnings.filterwarnings("ignore")
+
     run_eval()

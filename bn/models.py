@@ -52,6 +52,7 @@ class BooleanNetworkMLP(BooleanNetworkClassifier):
 
 class BooleanNetworkNeuralDNF(BooleanNetworkClassifier):
     num_conjunctions: int
+    ndnf: NeuralDNF
 
     def __init__(self, num_input: int, num_output: int, num_conjunctions: int):
         super().__init__(num_input, num_output)

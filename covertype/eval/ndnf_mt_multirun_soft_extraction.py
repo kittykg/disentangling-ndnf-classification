@@ -249,12 +249,10 @@ def threshold_conjunctive_layer(
 def disentangle_conjunctive_layer(
     model: CoverTypeNeuralDNF,
     positive_j_minus_limit: int = -1,
-    negative_j_minus_limit: int = -1,
 ) -> BaseChainedNeuralDNF:
     log.info(
         "Disentangling the model with positive j_minus_limit: "
-        f"{positive_j_minus_limit}, negative j_minus_limit: "
-        f"{negative_j_minus_limit}"
+        f"{positive_j_minus_limit}"
     )
 
     # Remember the disjunction-conjunction mapping
@@ -278,10 +276,12 @@ def disentangle_conjunctive_layer(
     # split the conjunctions
     splitted_conj: dict[int, list[Tensor]] = dict()
     for conj_id in unique_conj_ids:
+        log.info(
+            f"Splitting conjunction {conj_id} with {torch.count_nonzero(conj_w[conj_id]).item()} non-zero weights"
+        )
         ret = split_entangled_conjunction(
             conj_w[conj_id],
             positive_disentangle_j_minus_limit=positive_j_minus_limit,
-            negative_disentangle_j_minus_limit=negative_j_minus_limit,
         )
 
         if ret is None:
@@ -416,7 +416,7 @@ def prune_chained_ndnf(
             {},
             comparison_fn,
             options={
-                "skip_prune_conj_with_empty_disj": True,
+                "skip_prune_disj_with_empty_conj": False,
                 "skip_last_prune_conj": True,
             },
         )

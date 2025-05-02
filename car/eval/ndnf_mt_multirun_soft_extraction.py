@@ -358,7 +358,7 @@ def prune_chained_ndnf(
             {},
             comparison_fn,
             options={
-                "skip_prune_conj_with_empty_disj": True,
+                "skip_prune_disj_with_empty_conj": False,
                 "skip_last_prune_conj": True,
             },
         )
