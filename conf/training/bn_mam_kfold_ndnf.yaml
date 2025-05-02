@@ -1,0 +1,42 @@
+experiment_name: bn_mam_ndnf_k10_l64_b32_e500
+seed: null
+
+use_cuda: True
+use_mps: False
+
+log_interval: 50
+
+model_type: ndnf
+model_architecture:
+  n_conjunctions: 64
+
+k_folds: 10
+
+optimiser: adam
+optimiser_lr: 0.003
+optimiser_weight_decay: 0.0001
+scheduler_step: 50
+loss_func: bce
+batch_size: 32
+loader_num_workers: 0
+epochs: 500
+
+dds:
+  type: exponential
+  initial_delta: 0.1
+  delta_decay_delay: 5
+  delta_decay_steps: 2 # this will be ignored for monitoring based dds
+  delta_decay_rate: 1.1
+  # performance_offset: 1e-2  # used for monitoring based dds
+
+log_lr_in_wandb: True
+scheduler:
+  type: cos
+  warmup_steps: 100
+  decay_rate: 0.97
+  decay_steps: 100
+  min_lr: 1e-6
+
+aux_loss:
+  weight_l1_mod_lambda: 1e-6
+  tanh_conj_lambda: 1e-1

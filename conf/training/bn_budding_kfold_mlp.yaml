@@ -1,0 +1,25 @@
+experiment_name: bn_budding_mlp_l64_b32_e300
+seed: null
+
+use_cuda: True
+use_mps: False
+
+log_interval: 100
+
+model_type: mlp
+model_architecture:
+  num_latent: 64
+
+k_folds: 10
+
+optimiser: adam
+optimiser_lr: 0.004
+optimiser_weight_decay: 0.0001
+scheduler_step: 50
+loss_func: bce_logit
+batch_size: 32
+loader_num_workers: 0
+epochs: 200
+
+aux_loss:
+  weight_l1_mod_lambda: 1e-3

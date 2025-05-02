@@ -1,0 +1,14 @@
+experiment_name: bn_fission_ndnf_k10_l64_b32_e500
+seed: 6905
+
+use_cuda: True
+use_mps: False
+
+model_type: ndnf
+model_architecture:
+  n_conjunctions: 64
+
+k_folds: 10
+
+discretisation_method: threshold # 'threshold' or 'disentangle'
+storage_dir: ??? # overwrite this
