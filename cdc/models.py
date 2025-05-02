@@ -62,8 +62,10 @@ class CDCMLP(CDCClassifier):
 class CDCNeuralDNF(CDCClassifier):
     invented_predicate_per_input: int
     num_conjunctions: int
+    manually_spare_conj_layer_k: int | None = None
 
     predicate_inventor: NeuralDNFPredicateInventor
+    ndnf_num_input_features: int
     ndnf: NeuralDNF
 
     def __init__(
@@ -71,6 +73,7 @@ class CDCNeuralDNF(CDCClassifier):
         invented_predicate_per_input: int,
         num_conjunctions: int,
         predicate_inventor_tau: float = 1.0,
+        manually_spare_conj_layer_k: int | None = None,
     ):
         super().__init__()
 
@@ -84,14 +87,40 @@ class CDCNeuralDNF(CDCClassifier):
             tau=predicate_inventor_tau,
         )
 
+        self.ndnf_num_input_features = (
+            invented_predicate_per_input * CDC_TOTAL_NUM_REAL_VALUED_FEATURES
+            + CDC_NUM_BINARY_FEATURES
+        )
         self.ndnf = NeuralDNF(
-            n_in=self.invented_predicate_per_input
-            * CDC_TOTAL_NUM_REAL_VALUED_FEATURES
-            + CDC_NUM_BINARY_FEATURES,
+            n_in=self.ndnf_num_input_features,
             n_conjunctions=num_conjunctions,
             n_out=1,
             delta=1.0,
         )
+
+        self.manually_spare_conj_layer_k = manually_spare_conj_layer_k
+        if (
+            manually_spare_conj_layer_k is not None
+            and manually_spare_conj_layer_k > 0
+        ):
+            # Manually set some
+            self.manually_sparse_conjunctive_layer()
+
+    def manually_sparse_conjunctive_layer(self) -> None:
+        """
+        This function is used to randomly set the k connections between input
+        and a conjunctive node to zero. Once set to zero, the connections will
+        not be updated during training. This is useful to create a sparse model.
+        """
+        # Set the weights to zero
+        for i in range(self.num_conjunctions):
+            indices_to_zero = torch.randperm(self.ndnf_num_input_features)[
+                : self.manually_spare_conj_layer_k
+            ]
+            self.ndnf.conjunctions.weights.data[i, indices_to_zero] = 0.0
+            # disable the gradient for these weights via masking
+            self.ndnf.conj_weight_mask[i, indices_to_zero] = 0.0
+
 
     def get_invented_predicates(
         self, x: Tensor, discretised: bool = False
@@ -156,6 +185,9 @@ def construct_model(cfg: DictConfig) -> CDCClassifier:
             num_conjunctions=cfg["model_architecture"]["n_conjunctions"],
             predicate_inventor_tau=cfg["model_architecture"].get(
                 "predicate_inventor_tau", 1.0
+            ),
+            manually_spare_conj_layer_k=cfg["model_architecture"].get(
+                "manually_spare_conj_layer_k", None
             ),
         )
 
