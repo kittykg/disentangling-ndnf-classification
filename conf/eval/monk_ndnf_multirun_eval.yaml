@@ -1,10 +1,11 @@
 experiment_name: monk_ndnf_nc32_b32_e200
-multirun_seeds: [95, 1208, 1491, 1874, 2762, 4184, 4884, 6716, 8356, 8761, 9057, 9522, 9536, 9571, 9795, 9807]
+multirun_seeds: [95, 1208, 1491, 1874, 2762, 4184, 4884, 5266, 6716, 8356, 8606, 8761, 9057, 9522, 9536, 9571, 9795, 9807]
 
 use_cuda: True
 use_mps: False
 
 val_size: 0.15
+val_seed: 73
 
 model_type: ndnf
 model_architecture:
