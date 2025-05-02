@@ -242,6 +242,23 @@ def _train(
                 )
 
             loss.backward()
+
+            # If using NDNF model, check if some weights are manually set to be
+            # sparse. If so, after backward, we need to set the gradients of
+            # those weights to 0, so that they are not updated. The NDNF module
+            # has a `conj_weight_mask` that stores the mask for the weights that
+            # are manually set to be sparse.
+            if (
+                isinstance(model, CoverTypeBaseNeuralDNF)
+                and model.manually_spare_conj_layer_k is not None
+                and model.manually_spare_conj_layer_k > 0
+            ):
+                assert model.ndnf.conjunctions.weights.grad is not None
+                with torch.no_grad():
+                    model.ndnf.conjunctions.weights.grad *= (
+                        model.ndnf.conj_weight_mask.to(device)
+                    )
+
             optimiser.step()
 
             # Update meters

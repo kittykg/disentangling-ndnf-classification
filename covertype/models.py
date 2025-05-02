@@ -65,6 +65,7 @@ class CoverTypeBaseNeuralDNF(CoverTypeClassifier):
     invented_predicate_per_input: int
     num_conjunctions: int
     c2b: bool
+    manually_spare_conj_layer_k: int | None = None
 
     predicate_inventor: NeuralDNFPredicateInventor
     ndnf_num_input_features: int
@@ -76,6 +77,7 @@ class CoverTypeBaseNeuralDNF(CoverTypeClassifier):
         num_conjunctions: int,
         predicate_inventor_tau: float = 1.0,
         c2b: bool = False,
+        manually_spare_conj_layer_k: int | None = None,
     ):
         super().__init__()
 
@@ -98,6 +100,29 @@ class CoverTypeBaseNeuralDNF(CoverTypeClassifier):
             self.ndnf_num_input_features += COVERTYPE_NUM_BINARY_FEATURES
 
         self.ndnf = self._create_ndnf_model()
+
+        self.manually_spare_conj_layer_k = manually_spare_conj_layer_k
+        if (
+            manually_spare_conj_layer_k is not None
+            and manually_spare_conj_layer_k > 0
+        ):
+            # Manually set some
+            self.manually_sparse_conjunctive_layer()
+
+    def manually_sparse_conjunctive_layer(self) -> None:
+        """
+        This function is used to randomly set the k connections between input
+        and a conjunctive node to zero. Once set to zero, the connections will
+        not be updated during training. This is useful to create a sparse model.
+        """
+        # Set the weights to zero
+        for i in range(self.num_conjunctions):
+            indices_to_zero = torch.randperm(self.ndnf_num_input_features)[
+                : self.manually_spare_conj_layer_k
+            ]
+            self.ndnf.conjunctions.weights.data[i, indices_to_zero] = 0.0
+            # disable the gradient for these weights via masking
+            self.ndnf.conj_weight_mask[i, indices_to_zero] = 0.0
 
     def get_invented_predicates(
         self, x: Tensor, discretised: bool = False
@@ -271,6 +296,9 @@ def construct_model(cfg: DictConfig) -> CoverTypeClassifier:
                 "predicate_inventor_tau", 1.0
             ),
             c2b=cfg.get("convert_categorical_to_binary_encoding", False),
+            manually_spare_conj_layer_k=cfg["model_architecture"].get(
+                "manually_spare_conj_layer_k", None
+            ),
         )
 
     return CoverTypeMLP(
