@@ -260,7 +260,7 @@ def multirun_threshold(cfg: DictConfig) -> None:
             X,
             y,
             test_size=eval_cfg.get("val_size", 0.2),
-            random_state=s,
+            random_state=eval_cfg.get("val_seed", 73),
         )
         train_dataset = CarDataset(X_train, y_train)
         val_dataset = CarDataset(X_val, y_val)
