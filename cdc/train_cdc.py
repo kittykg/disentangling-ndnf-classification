@@ -230,8 +230,8 @@ def _train(
             # are manually set to be sparse.
             if (
                 isinstance(model, CDCNeuralDNF)
-                and model.manually_spare_conj_layer_k is not None
-                and model.manually_spare_conj_layer_k > 0
+                and model.manually_sparse_conj_layer_k is not None
+                and model.manually_sparse_conj_layer_k > 0
             ):
                 assert model.ndnf.conjunctions.weights.grad is not None
                 with torch.no_grad():

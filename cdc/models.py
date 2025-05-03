@@ -62,7 +62,7 @@ class CDCMLP(CDCClassifier):
 class CDCNeuralDNF(CDCClassifier):
     invented_predicate_per_input: int
     num_conjunctions: int
-    manually_spare_conj_layer_k: int | None = None
+    manually_sparse_conj_layer_k: int | None = None
 
     predicate_inventor: NeuralDNFPredicateInventor
     ndnf_num_input_features: int
@@ -73,7 +73,7 @@ class CDCNeuralDNF(CDCClassifier):
         invented_predicate_per_input: int,
         num_conjunctions: int,
         predicate_inventor_tau: float = 1.0,
-        manually_spare_conj_layer_k: int | None = None,
+        manually_sparse_conj_layer_k: int | None = None,
     ):
         super().__init__()
 
@@ -98,10 +98,10 @@ class CDCNeuralDNF(CDCClassifier):
             delta=1.0,
         )
 
-        self.manually_spare_conj_layer_k = manually_spare_conj_layer_k
+        self.manually_sparse_conj_layer_k = manually_sparse_conj_layer_k
         if (
-            manually_spare_conj_layer_k is not None
-            and manually_spare_conj_layer_k > 0
+            manually_sparse_conj_layer_k is not None
+            and manually_sparse_conj_layer_k > 0
         ):
             # Manually set some
             self.manually_sparse_conjunctive_layer()
@@ -115,12 +115,11 @@ class CDCNeuralDNF(CDCClassifier):
         # Set the weights to zero
         for i in range(self.num_conjunctions):
             indices_to_zero = torch.randperm(self.ndnf_num_input_features)[
-                : self.manually_spare_conj_layer_k
+                : self.manually_sparse_conj_layer_k
             ]
             self.ndnf.conjunctions.weights.data[i, indices_to_zero] = 0.0
             # disable the gradient for these weights via masking
             self.ndnf.conj_weight_mask[i, indices_to_zero] = 0.0
-
 
     def get_invented_predicates(
         self, x: Tensor, discretised: bool = False
@@ -186,8 +185,8 @@ def construct_model(cfg: DictConfig) -> CDCClassifier:
             predicate_inventor_tau=cfg["model_architecture"].get(
                 "predicate_inventor_tau", 1.0
             ),
-            manually_spare_conj_layer_k=cfg["model_architecture"].get(
-                "manually_spare_conj_layer_k", None
+            manually_sparse_conj_layer_k=cfg["model_architecture"].get(
+                "manually_sparse_conj_layer_k", None
             ),
         )
 
