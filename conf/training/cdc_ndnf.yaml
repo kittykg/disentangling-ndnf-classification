@@ -1,4 +1,4 @@
-experiment_name: cdc_ndnf_pi8_nc128_b128_e200
+experiment_name: cdc_ndnf_pi8_nc128_msc40_b128_e200
 seed: null
 
 use_cuda: True
@@ -15,6 +15,7 @@ model_type: ndnf
 model_architecture:
   invented_predicate_per_input: 8
   n_conjunctions: 128
+  manually_sparse_conj_layer_k: 40
 
 optimiser: adam
 optimiser_lr: 0.001
@@ -42,5 +43,5 @@ pi_tau:
 
 aux_loss:
   weight_l1_mod_lambda: 1e-6
-  tanh_conj_lambda: 1e-12
+  tanh_conj_lambda: 1e-5
   pi_lambda: 1e-3

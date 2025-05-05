@@ -1,22 +1,5 @@
-# experiment_name: cdc_ndnf_pi16_nc128_b128_e200
-# multirun_seeds: [
-#   2086, 2090, 2215, 2322,
-#   2816, 3051, 3240, 4013,
-#   4051, 4733, 5534, 5600,
-#   7708, 8767, 8785, 9012
-# ]
-
-experiment_name: cdc_ndnf_pi8_nc128_b128_e200
-multirun_seeds: [
-  # 499,                          # success
-  # 1838, 2160,                   # stopped
-  # 3866, 4096, 4099,             # success
-  # 4568, 6680,                   # stopped
-  # 7274, 7489, 8334, 8384, 8626, # success
-  # 9025, 9118,                   # stopped
-  # 9352,                         # success
-  499, 3866, 4096, 4099, 7274, 7489, 8334, 8384, 8626, 9352,
-]
+experiment_name: cdc_ndnf_pi8_nc128_msc40_b128_e200
+multirun_seeds: [318, 420, 1030, 4210, 4400, 5265, 5405, 5774, 8310, 8365]
 
 use_cuda: True
 use_mps: False
@@ -26,9 +9,9 @@ val_seed: 73
 
 model_type: ndnf
 model_architecture:
-  # invented_predicate_per_input: 16
   invented_predicate_per_input: 8
   n_conjunctions: 128
+  manually_sparse_conj_layer_k: 40
 
 discretisation_method: threshold # 'threshold' or 'disentangle'
 storage_dir: ??? # overwrite this

@@ -8,6 +8,7 @@ use_cuda: True
 use_mps: False
 
 val_size: 0.15
+val_seed: 73
 
 model_type: ndnf
 model_architecture:
