@@ -16,11 +16,11 @@ from torch.utils.data import DataLoader
 import wandb
 
 from neural_dnf.utils import (
-    DeltaDelayedDecayScheduler,  # base DDS class
+    DeltaDelayedDecayScheduler,
     DeltaDelayedExponentialDecayScheduler,
     DeltaDelayedLinearDecayScheduler,
     DeltaDelayedMonotonicFunctionScheduler,
-    DeltaDelayedMonitoringDecayScheduler,  # monitoring base DDS class
+    DeltaDelayedMonitoringDecayScheduler,
     DeltaDelayedMonitoringExponentialDecayScheduler,
     DeltaDelayedMonitoringLinearDecayScheduler,
 )
@@ -39,7 +39,6 @@ from analysis import (
     AccuracyMeter,
     JaccardScoreMeter,
 )
-from predicate_invention import DelayedExponentialTauDecayScheduler
 from utils import post_to_discord_webhook, generate_weight_histogram
 
 from covertype.eval.eval_common import (
@@ -53,11 +52,7 @@ from covertype.data_utils_covertype import (
 )
 from covertype.models import (
     COVERTYPE_NUM_CLASSES,
-    CoverTypeClassifier,
-    CovertTypeThresholdPIBaseNeuralDNF,
-    CoverTypeThresholdPINeuralDNFMT,
-    CoverTypeThresholdPINeuralDNFEO,
-    construct_model,
+    CoverTypeMLPPINeuralDNFMT,
 )
 
 NON_TRAIN_LOADER_BATCH_SIZE = 4096
@@ -68,43 +63,36 @@ def loss_calculation(
     criterion: torch.nn.Module,
     y_hat: Tensor,
     y: Tensor,
-    model: CoverTypeClassifier,
-    conj_out: Tensor | None = None,
-    invented_predicates: Tensor | None = None,
-    all_forms_dict: dict[str, dict[str, Tensor]] | None = None,
+    model: CoverTypeMLPPINeuralDNFMT,
+    conj_out: Tensor,
+    invented_predicates: Tensor,
+    all_forms_dict: dict[str, dict[str, Tensor]],
 ) -> dict[str, Tensor]:
     loss_dict = {
         "base_loss": criterion(y_hat, y),
         "weight_reg_loss": model.get_weight_reg_loss(),
+        "conj_reg_loss": (1 - conj_out.abs()).mean(),
+        "invented_predicates_reg_loss": (1 - invented_predicates.abs()).mean(),
     }
 
-    if conj_out is not None and invented_predicates is not None:
-        # Conjunction regularisation loss (push to ±1)
-        loss_dict["conj_reg_loss"] = (1 - conj_out.abs()).mean()
-        # Invented predicates regularisation loss (push to ±1)
-        loss_dict["invented_predicates_reg_loss"] = (
-            1 - invented_predicates.abs()
-        ).mean()
+    # MT regularisation loss: push the mutex-tanh activation and the tanh
+    # activation to be the same
+    disj_mt = all_forms_dict["disjunction"]["mutex_tanh"]
+    disj_tanh = all_forms_dict["disjunction"]["tanh"]
 
-    if all_forms_dict is not None:
-        # MT regularisation loss: push the mutex-tanh activation and the tanh
-        # activation to be the same
-        disj_mt = all_forms_dict["disjunction"]["mutex_tanh"]
-        disj_tanh = all_forms_dict["disjunction"]["tanh"]
-
-        p_k = (disj_mt + 1) / 2
-        p_k_hat = (disj_tanh + 1) / 2
-        loss_dict["mt_reg_loss"] = -torch.sum(
-            p_k * torch.log(p_k_hat + 1e-8)
-            + (1 - p_k) * torch.log(1 - p_k_hat + 1e-8)
-        )
+    p_k = (disj_mt + 1) / 2
+    p_k_hat = (disj_tanh + 1) / 2
+    loss_dict["mt_reg_loss"] = -torch.sum(
+        p_k * torch.log(p_k_hat + 1e-8)
+        + (1 - p_k) * torch.log(1 - p_k_hat + 1e-8)
+    )
 
     return loss_dict
 
 
 def _train(
     training_cfg: DictConfig,
-    model: CoverTypeClassifier,
+    model: CoverTypeMLPPINeuralDNFMT,
     train_loader: DataLoader,
     val_loader: DataLoader,
     device: torch.device,
@@ -129,38 +117,29 @@ def _train(
     # Loss function
     criterion = nn.CrossEntropyLoss()
 
-    if isinstance(model, CovertTypeThresholdPIBaseNeuralDNF):
-        # Delta and tau delay scheduler if using NeuralDNF based model
-        dds_type = {
-            "linear": DeltaDelayedLinearDecayScheduler,
-            "exponential": DeltaDelayedExponentialDecayScheduler,
-            "monotonic": DeltaDelayedMonotonicFunctionScheduler,
-            "monitoring_linear": DeltaDelayedMonitoringLinearDecayScheduler,
-            "monitoring_exponential": DeltaDelayedMonitoringExponentialDecayScheduler,
-        }[training_cfg["dds"]["type"]]
-        dds_params = {
-            "initial_delta": training_cfg["dds"]["initial_delta"],
-            "delta_decay_delay": training_cfg["dds"]["delta_decay_delay"],
-            "delta_decay_steps": training_cfg["dds"]["delta_decay_steps"],
-            "delta_decay_rate": training_cfg["dds"]["delta_decay_rate"],
-            "target_module_type": model.ndnf.__class__.__name__,
-        }
-        if training_cfg["dds"]["type"].startswith("monitoring"):
-            dds_params["performance_offset"] = training_cfg["dds"].get(
-                "performance_offset", 1e-2
-            )
-
-        dds: DeltaDelayedDecayScheduler = dds_type(**dds_params)
-        model.ndnf.set_delta_val(training_cfg["dds"]["initial_delta"])
-        delta_one_counter = 0
-
-        tau_scheduler = DelayedExponentialTauDecayScheduler(
-            initial_tau=training_cfg["pi_tau"]["initial_tau"],
-            tau_decay_delay=training_cfg["pi_tau"]["tau_decay_delay"],
-            tau_decay_steps=training_cfg["pi_tau"]["tau_decay_steps"],
-            tau_decay_rate=training_cfg["pi_tau"]["tau_decay_rate"],
-            min_tau=training_cfg["pi_tau"]["min_tau"],
+    # Delta delay scheduler for NeuralDNF based model
+    dds_type = {
+        "linear": DeltaDelayedLinearDecayScheduler,
+        "exponential": DeltaDelayedExponentialDecayScheduler,
+        "monotonic": DeltaDelayedMonotonicFunctionScheduler,
+        "monitoring_linear": DeltaDelayedMonitoringLinearDecayScheduler,
+        "monitoring_exponential": DeltaDelayedMonitoringExponentialDecayScheduler,
+    }[training_cfg["dds"]["type"]]
+    dds_params = {
+        "initial_delta": training_cfg["dds"]["initial_delta"],
+        "delta_decay_delay": training_cfg["dds"]["delta_decay_delay"],
+        "delta_decay_steps": training_cfg["dds"]["delta_decay_steps"],
+        "delta_decay_rate": training_cfg["dds"]["delta_decay_rate"],
+        "target_module_type": model.ndnf.__class__.__name__,
+    }
+    if training_cfg["dds"]["type"].startswith("monitoring"):
+        dds_params["performance_offset"] = training_cfg["dds"].get(
+            "performance_offset", 1e-2
         )
+
+    dds: DeltaDelayedDecayScheduler = dds_type(**dds_params)
+    model.ndnf.set_delta_val(training_cfg["dds"]["initial_delta"])
+    delta_one_counter = 0
 
     # Other training settings
     gen_weight_hist = training_cfg.get("gen_weight_hist", False)
@@ -171,16 +150,12 @@ def _train(
         "overall_loss": MetricValueMeter("overall_loss_meter"),
         "base_loss": MetricValueMeter("base_loss_meter"),
         "weight_reg_loss": MetricValueMeter("weight_reg_loss_meter"),
-    }
-    if isinstance(model, CovertTypeThresholdPIBaseNeuralDNF):
-        train_loss_meters["conj_reg_loss"] = MetricValueMeter(
-            "conj_reg_loss_meter"
-        )
-        train_loss_meters["invented_predicates_reg_loss"] = MetricValueMeter(
+        "conj_reg_loss": MetricValueMeter("conj_reg_loss_meter"),
+        "invented_predicates_reg_loss": MetricValueMeter(
             "invented_predicates_reg_loss_meter"
-        )
-    if isinstance(model, CoverTypeThresholdPINeuralDNFMT):
-        train_loss_meters["mt_reg_loss"] = MetricValueMeter("mt_reg_loss_meter")
+        ),
+        "mt_reg_loss": MetricValueMeter("mt_reg_loss_meter"),
+    }
 
     train_acc_meter = AccuracyMeter()
     train_jacc_meter = JaccardScoreMeter()
@@ -201,19 +176,11 @@ def _train(
         for data in train_loader:
             optimiser.zero_grad()
 
-            x, y = get_x_and_y_covertype(
-                data,
-                device,
-                use_ndnf=isinstance(model, CovertTypeThresholdPIBaseNeuralDNF),
-            )
+            x, y = get_x_and_y_covertype(data, device, use_ndnf=True)
             y_hat = model(x)
-            conj_out, invented_predicates, all_forms_dict = None, None, None
-
-            if isinstance(model, CovertTypeThresholdPIBaseNeuralDNF):
-                conj_out = model.get_conjunction(x)
-                invented_predicates = model.get_invented_predicates(x)
-            if isinstance(model, CoverTypeThresholdPINeuralDNFMT):
-                all_forms_dict = model.get_all_forms(x)
+            conj_out = model.get_conjunction(x)
+            invented_predicates = model.get_invented_predicates(x)
+            all_forms_dict = model.get_all_forms(x)
 
             loss_dict = loss_calculation(
                 criterion,
@@ -229,30 +196,21 @@ def _train(
                 loss_dict["base_loss"]
                 + training_cfg["aux_loss"]["weight_l1_mod_lambda"]
                 * loss_dict["weight_reg_loss"]
+                + training_cfg["aux_loss"]["tanh_conj_lambda"]
+                * loss_dict["conj_reg_loss"]
+                + training_cfg["aux_loss"]["pi_lambda"]
+                * loss_dict["invented_predicates_reg_loss"]
+                + training_cfg["aux_loss"]["mt_reg_lambda"]
+                * loss_dict["mt_reg_loss"]
             )
-            if isinstance(model, CovertTypeThresholdPIBaseNeuralDNF):
-                loss += (
-                    training_cfg["aux_loss"]["tanh_conj_lambda"]
-                    * loss_dict["conj_reg_loss"]
-                    + training_cfg["aux_loss"]["pi_lambda"]
-                    * loss_dict["invented_predicates_reg_loss"]
-                )
-            if isinstance(model, CoverTypeThresholdPINeuralDNFMT):
-                loss += (
-                    training_cfg["aux_loss"]["mt_reg_lambda"]
-                    * loss_dict["mt_reg_loss"]
-                )
 
             loss.backward()
 
             # If using NDNF model, check if some weights are manually set to be
             # sparse. If so, after backward, we need to set the gradients of
-            # those weights to 0, so that they are not updated. The NDNF module
-            # has a `conj_weight_mask` that stores the mask for the weights that
-            # are manually set to be sparse.
+            # those weights to 0, so that they are not updated.
             if (
-                isinstance(model, CovertTypeThresholdPIBaseNeuralDNF)
-                and model.manually_sparse_conj_layer_k is not None
+                model.manually_sparse_conj_layer_k is not None
                 and model.manually_sparse_conj_layer_k > 0
             ):
                 assert model.ndnf.conjunctions.weights.grad is not None
@@ -270,25 +228,8 @@ def _train(
             train_acc_meter.update(y_hat, y)
 
             # Update jacc meter
-            if isinstance(model, CoverTypeThresholdPINeuralDNFEO):
-                # NeuralDNFEO
-                with torch.no_grad():
-                    y_hat_prime = model.get_pre_eo_output(x)
-                    y_hat_prime = (torch.tanh(y_hat_prime) > 0).long()
-            elif isinstance(model, CoverTypeThresholdPINeuralDNFMT):
-                # NeuralDNFMT
-                assert all_forms_dict is not None
-                with torch.no_grad():
-                    y_hat_prime = (
-                        all_forms_dict["disjunction"]["tanh"] > 0
-                    ).long()
-            else:
-                # MLP
-                # convert the max value to the class
-                y_hat_prime = torch.zeros(len(y), COVERTYPE_NUM_CLASSES).long()
-                y_hat_prime[
-                    range(len(y)), torch.argmax(y_hat, dim=1).long()
-                ] = 1
+            with torch.no_grad():
+                y_hat_prime = (all_forms_dict["disjunction"]["tanh"] > 0).long()
             train_jacc_meter.update(y_hat_prime, y)
 
         # Log average performance for train
@@ -300,23 +241,14 @@ def _train(
         assert isinstance(avg_macro_jacc, float)
 
         if epoch % log_interval == 0:
-            if isinstance(model, CovertTypeThresholdPIBaseNeuralDNF):
-                log_info_str = (
-                    f"  [{epoch + 1:3d}] "
-                    f"Train  Delta: {model.ndnf.get_delta_val()[0]:.3f}  "
-                    f"Tau: {model.predicate_inventor.tau:.3f}  "
-                    f"avg loss: {avg_loss:.3f}  "
-                    f"avg acc: {avg_acc:.3f}  "
-                    f"avg sample jacc: {avg_sample_jacc:.3f}  "
-                    f"avg macro jacc: {avg_macro_jacc:.3f}"
-                )
-            else:
-                log_info_str = (
-                    f"  [{epoch + 1:3d}] Train                          "
-                    f"avg loss: {avg_loss:.3f}  avg acc: {avg_acc:.3f}  "
-                    f"avg sample jacc: {avg_sample_jacc:.3f}  "
-                    f"avg macro jacc: {avg_macro_jacc:.3f}"
-                )
+            log_info_str = (
+                f"  [{epoch + 1:3d}] "
+                f"Train  Delta: {model.ndnf.get_delta_val()[0]:.3f}  "
+                f"avg loss: {avg_loss:.3f}  "
+                f"avg acc: {avg_acc:.3f}  "
+                f"avg sample jacc: {avg_sample_jacc:.3f}  "
+                f"avg macro jacc: {avg_macro_jacc:.3f}"
+            )
             log.info(log_info_str)
 
         # -------------------------------------------------------------------- #
@@ -330,21 +262,12 @@ def _train(
         for data in val_loader:
             with torch.no_grad():
                 # Get model output and compute loss
-                x, y = get_x_and_y_covertype(
-                    data,
-                    device,
-                    use_ndnf=isinstance(
-                        model, CovertTypeThresholdPIBaseNeuralDNF
-                    ),
-                )
+                x, y = get_x_and_y_covertype(data, device, use_ndnf=True)
 
                 y_hat = model(x)
-                conj_out, invented_predicates, all_forms_dict = None, None, None
-                if isinstance(model, CovertTypeThresholdPIBaseNeuralDNF):
-                    conj_out = model.get_conjunction(x)
-                    invented_predicates = model.get_invented_predicates(x)
-                if isinstance(model, CoverTypeThresholdPINeuralDNFMT):
-                    all_forms_dict = model.get_all_forms(x)
+                conj_out = model.get_conjunction(x)
+                invented_predicates = model.get_invented_predicates(x)
+                all_forms_dict = model.get_all_forms(x)
 
                 loss_dict = loss_calculation(
                     criterion,
@@ -360,39 +283,18 @@ def _train(
                     loss_dict["base_loss"]
                     + training_cfg["aux_loss"]["weight_l1_mod_lambda"]
                     * loss_dict["weight_reg_loss"]
+                    + training_cfg["aux_loss"]["tanh_conj_lambda"]
+                    * loss_dict["conj_reg_loss"]
+                    + training_cfg["aux_loss"]["pi_lambda"]
+                    * loss_dict["invented_predicates_reg_loss"]
+                    + training_cfg["aux_loss"]["mt_reg_lambda"]
+                    * loss_dict["mt_reg_loss"]
                 )
-                if isinstance(model, CovertTypeThresholdPIBaseNeuralDNF):
-                    loss += (
-                        training_cfg["aux_loss"]["tanh_conj_lambda"]
-                        * loss_dict["conj_reg_loss"]
-                        + training_cfg["aux_loss"]["pi_lambda"]
-                        * loss_dict["invented_predicates_reg_loss"]
-                    )
-                if isinstance(model, CoverTypeThresholdPINeuralDNFMT):
-                    loss += (
-                        training_cfg["aux_loss"]["mt_reg_lambda"]
-                        * loss_dict["mt_reg_loss"]
-                    )
 
                 # Update meters
                 epoch_val_loss_meter.update(loss.item())
                 epoch_val_acc_meter.update(y_hat, y)
-                if isinstance(model, CoverTypeThresholdPINeuralDNFEO):
-                    y_hat_prime = model.get_pre_eo_output(x)
-                    y_hat_prime = (torch.tanh(y_hat) > 0).long()
-                elif isinstance(model, CoverTypeThresholdPINeuralDNFMT):
-                    assert all_forms_dict is not None
-                    with torch.no_grad():
-                        y_hat_prime = (
-                            all_forms_dict["disjunction"]["tanh"] > 0
-                        ).long()
-                else:
-                    y_hat_prime = torch.zeros(
-                        len(y), COVERTYPE_NUM_CLASSES
-                    ).long()
-                    y_hat_prime[
-                        range(len(y)), torch.argmax(y_hat, dim=1).long()
-                    ] = 1
+                y_hat_prime = (all_forms_dict["disjunction"]["tanh"] > 0).long()
                 epoch_val_jacc_meter.update(y_hat_prime, y)
 
         val_avg_loss = epoch_val_loss_meter.get_average()
@@ -414,27 +316,16 @@ def _train(
         # -------------------------------------------------------------------- #
         scheduler.step()
 
-        if isinstance(model, CovertTypeThresholdPIBaseNeuralDNF):
-            # Update delta value
-            if not isinstance(dds, DeltaDelayedMonitoringDecayScheduler):
-                delta_dict = dds.step(model.ndnf)
-            else:
-                delta_dict = dds.step(model.ndnf, val_avg_acc)
-            new_delta = delta_dict["new_delta_vals"][0]
-            old_delta = delta_dict["old_delta_vals"][0]
+        # Update delta value
+        if not isinstance(dds, DeltaDelayedMonitoringDecayScheduler):
+            delta_dict = dds.step(model.ndnf)
+        else:
+            delta_dict = dds.step(model.ndnf, val_avg_acc)
+        new_delta = delta_dict["new_delta_vals"][0]
+        old_delta = delta_dict["old_delta_vals"][0]
 
-            # Update tau value
-            tau_dict = tau_scheduler.step(model.predicate_inventor)
-            old_tau = tau_dict["old_tau"]
-
-            if new_delta == 1.0:
-                # The first time where new_delta_val becomes 1, the network
-                # isn't train with delta being 1 for that epoch. So
-                # delta_one_counter starts with -1, and when new_delta_val
-                # is first time being 1, the delta_one_counter becomes 0. We
-                # do not use the delta_one_counter for now, but it can be
-                # used to customise when to add auxiliary loss
-                delta_one_counter += 1
+        if new_delta == 1.0:
+            delta_one_counter += 1
 
         # -------------------------------------------------------------------- #
         # 4. (Optional) WandB logging
@@ -450,17 +341,13 @@ def _train(
                 "val/accuracy": val_avg_acc,
                 "val/sample_jaccard": val_sample_jaccard,
                 "val/macro_jaccard": val_macro_jaccard,
+                "train/delta": old_delta,
             }
-            if isinstance(model, CovertTypeThresholdPIBaseNeuralDNF):
-                wandb_log_dict["train/delta"] = old_delta
-                wandb_log_dict["train/tau"] = old_tau
             for key, meter in train_loss_meters.items():
                 if key == "overall_loss":
                     continue
                 wandb_log_dict[f"train/{key}"] = meter.get_average()
-            if gen_weight_hist and isinstance(
-                model, CovertTypeThresholdPIBaseNeuralDNF
-            ):
+            if gen_weight_hist:
                 # Generate weight histogram
                 f1, f2 = generate_weight_histogram(model.ndnf)
                 wandb_log_dict["conj_w_hist"] = wandb.Image(f1)
@@ -550,24 +437,27 @@ def train(
     )
 
     # Model
-    model = construct_model(training_cfg)
+    model = CoverTypeMLPPINeuralDNFMT(
+        predicate_inventor_dims=training_cfg["model_architecture"][
+            "predicate_inventor_mlp_dims"
+        ],
+        num_conjunctions=training_cfg["model_architecture"]["n_conjunctions"],
+        c2b=training_cfg.get("convert_categorical_to_binary_encoding", False),
+        manually_sparse_conj_layer_k=training_cfg["model_architecture"].get(
+            "manually_sparse_conj_layer_k", None
+        ),
+    )
     model.to(device)
     log.info(f"Model: {model}")
 
     _train(training_cfg, model, train_loader, val_loader, device, use_wandb)
 
-    if isinstance(model, CovertTypeThresholdPIBaseNeuralDNF):
-        model.ndnf.set_delta_val(1.0)
+    model.ndnf.set_delta_val(1.0)
 
     model_path = run_dir / "model.pth"
     torch.save(model.state_dict(), model_path)
 
-    eval_model = model
-    if isinstance(
-        model,
-        (CoverTypeThresholdPINeuralDNFEO, CoverTypeThresholdPINeuralDNFMT),
-    ):
-        eval_model = model.to_ndnf_model()
+    eval_model = model.to_ndnf_model()
     eval_model.to(device)
     eval_model.eval()
 
@@ -601,7 +491,7 @@ def train(
 @hydra.main(version_base=None, config_path="../conf", config_name="config")
 def run_experiment(cfg: DictConfig) -> None:
     # We expect the experiment name to be in the format of:
-    # covertype_{mlp/ndnf_eo}_...
+    # covertype_mlp_pi_...
     experiment_name = cfg["training"]["experiment_name"]
 
     seed = cfg["training"]["seed"]

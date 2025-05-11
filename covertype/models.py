@@ -67,9 +67,65 @@ class CoverTypeBaseNeuralDNF(CoverTypeClassifier):
     c2b: bool
     manually_sparse_conj_layer_k: int | None = None
 
-    predicate_inventor: NeuralDNFPredicateInventor
+    predicate_inventor: nn.Module
     ndnf_num_input_features: int
     ndnf: BaseNeuralDNF
+
+    def __init__(self):
+        super().__init__()
+
+    def manually_sparse_conjunctive_layer(self) -> None:
+        """
+        This function is used to randomly set the k connections between input
+        and a conjunctive node to zero. Once set to zero, the connections will
+        not be updated during training. This is useful to create a sparse model.
+        """
+        # Set the weights to zero
+        for i in range(self.num_conjunctions):
+            indices_to_zero = torch.randperm(self.ndnf_num_input_features)[
+                : self.manually_sparse_conj_layer_k
+            ]
+            self.ndnf.conjunctions.weights.data[i, indices_to_zero] = 0.0
+            # disable the gradient for these weights via masking
+            self.ndnf.conj_weight_mask[i, indices_to_zero] = 0.0
+
+    def get_invented_predicates(
+        self, x: Tensor, discretised: bool = False
+    ) -> Tensor:
+        raise NotImplementedError
+
+    def get_conjunction(
+        self, x: Tensor, discretise_invented_predicate: bool = False
+    ) -> Tensor:
+        # x: B x 44 or B x 16
+        x = self.get_invented_predicates(x, discretise_invented_predicate)
+        # x: B x (9 * IP + 35) or B x (9 * IP + 7)
+        return self.ndnf.get_conjunction(x)
+
+    def forward(
+        self, x: Tensor, discretise_invented_predicate: bool = False
+    ) -> Tensor:
+        # x: B x 44 or B x 16
+        x = self.get_invented_predicates(x, discretise_invented_predicate)
+        # x: B x (9 * IP + 35) or B x (9 * IP + 7)
+        return self.ndnf(x)
+
+    def get_weight_reg_loss(self) -> Tensor:
+        p_t = torch.cat(
+            [
+                parameter.view(-1)
+                for parameter in self.ndnf.parameters()
+                if parameter.requires_grad
+            ]
+        )
+        return torch.abs(p_t * (6 - torch.abs(p_t))).mean()
+
+    def _create_ndnf_model(self) -> BaseNeuralDNF:
+        raise NotImplementedError
+
+
+class CovertTypeThresholdPIBaseNeuralDNF(CoverTypeBaseNeuralDNF):
+    predicate_inventor: NeuralDNFPredicateInventor
 
     def __init__(
         self,
@@ -109,21 +165,6 @@ class CoverTypeBaseNeuralDNF(CoverTypeClassifier):
             # Manually set some
             self.manually_sparse_conjunctive_layer()
 
-    def manually_sparse_conjunctive_layer(self) -> None:
-        """
-        This function is used to randomly set the k connections between input
-        and a conjunctive node to zero. Once set to zero, the connections will
-        not be updated during training. This is useful to create a sparse model.
-        """
-        # Set the weights to zero
-        for i in range(self.num_conjunctions):
-            indices_to_zero = torch.randperm(self.ndnf_num_input_features)[
-                : self.manually_sparse_conj_layer_k
-            ]
-            self.ndnf.conjunctions.weights.data[i, indices_to_zero] = 0.0
-            # disable the gradient for these weights via masking
-            self.ndnf.conj_weight_mask[i, indices_to_zero] = 0.0
-
     def get_invented_predicates(
         self, x: Tensor, discretised: bool = False
     ) -> Tensor:
@@ -145,37 +186,8 @@ class CoverTypeBaseNeuralDNF(CoverTypeClassifier):
         # final_tensor: B x (9 * IP + 35) or B x (9 * IP + 7)
         return final_tensor
 
-    def get_conjunction(
-        self, x: Tensor, discretise_invented_predicate: bool = False
-    ) -> Tensor:
-        # x: B x 44 or B x 16
-        x = self.get_invented_predicates(x, discretise_invented_predicate)
-        # x: B x (9 * IP + 35) or B x (9 * IP + 7)
-        return self.ndnf.get_conjunction(x)
 
-    def forward(
-        self, x: Tensor, discretise_invented_predicate: bool = False
-    ) -> Tensor:
-        # x: B x 44 or B x 16
-        x = self.get_invented_predicates(x, discretise_invented_predicate)
-        # x: B x (9 * IP + 35) or B x (9 * IP + 7)
-        return self.ndnf(x)
-
-    def get_weight_reg_loss(self) -> Tensor:
-        p_t = torch.cat(
-            [
-                parameter.view(-1)
-                for parameter in self.ndnf.parameters()
-                if parameter.requires_grad
-            ]
-        )
-        return torch.abs(p_t * (6 - torch.abs(p_t))).mean()
-
-    def _create_ndnf_model(self) -> BaseNeuralDNF:
-        raise NotImplementedError
-
-
-class CoverTypeNeuralDNF(CoverTypeBaseNeuralDNF):
+class CoverTypeThresholdPINeuralDNF(CovertTypeThresholdPIBaseNeuralDNF):
     """
     This class is not expected to be trained directly
     """
@@ -194,7 +206,7 @@ class CoverTypeNeuralDNF(CoverTypeBaseNeuralDNF):
         self.ndnf = new_ndnf
 
 
-class CoverTypeNeuralDNFEO(CoverTypeBaseNeuralDNF):
+class CoverTypeThresholdPINeuralDNFEO(CovertTypeThresholdPIBaseNeuralDNF):
     ndnf: NeuralDNFEO
 
     def _create_ndnf_model(self) -> NeuralDNFEO:
@@ -213,11 +225,13 @@ class CoverTypeNeuralDNFEO(CoverTypeBaseNeuralDNF):
         # x: B x (9 * IP + 35) or B x (9 * IP + 7)
         return self.ndnf.get_plain_output(x)
 
-    def to_ndnf_model(self) -> CoverTypeNeuralDNF:
-        ndnf_model = CoverTypeNeuralDNF(
+    def to_ndnf_model(self) -> CoverTypeThresholdPINeuralDNF:
+        ndnf_model = CoverTypeThresholdPINeuralDNF(
             invented_predicate_per_input=self.invented_predicate_per_input,
             num_conjunctions=self.num_conjunctions,
             predicate_inventor_tau=self.predicate_inventor.tau,
+            c2b=self.c2b,
+            manually_sparse_conj_layer_k=self.manually_sparse_conj_layer_k,
         )
         ndnf_model.ndnf = self.ndnf.to_ndnf()
         ndnf_model.predicate_inventor.predicate_inventor.data = (
@@ -228,7 +242,7 @@ class CoverTypeNeuralDNFEO(CoverTypeBaseNeuralDNF):
         return ndnf_model
 
 
-class CoverTypeNeuralDNFMT(CoverTypeBaseNeuralDNF):
+class CoverTypeThresholdPINeuralDNFMT(CovertTypeThresholdPIBaseNeuralDNF):
     """
     Car classifier with NeuralDNFMutexTanh as the underlying model.
     This model is expected to be trained with NLLLoss, since it outputs log
@@ -265,11 +279,13 @@ class CoverTypeNeuralDNFMT(CoverTypeBaseNeuralDNF):
         # x: B x (9 * IP + 35) or B x (9 * IP + 7)
         return self.ndnf.get_all_forms(x)
 
-    def to_ndnf_model(self) -> CoverTypeNeuralDNF:
-        ndnf_model = CoverTypeNeuralDNF(
+    def to_ndnf_model(self) -> CoverTypeThresholdPINeuralDNF:
+        ndnf_model = CoverTypeThresholdPINeuralDNF(
             invented_predicate_per_input=self.invented_predicate_per_input,
             num_conjunctions=self.num_conjunctions,
             predicate_inventor_tau=self.predicate_inventor.tau,
+            c2b=self.c2b,
+            manually_sparse_conj_layer_k=self.manually_sparse_conj_layer_k,
         )
         ndnf_model.ndnf = self.ndnf.to_ndnf()
         ndnf_model.predicate_inventor.predicate_inventor.data = (
@@ -280,26 +296,177 @@ class CoverTypeNeuralDNFMT(CoverTypeBaseNeuralDNF):
         return ndnf_model
 
 
+class CoverTypeMLPPIBaseNeuralDNF(CoverTypeBaseNeuralDNF):
+    """
+    A NeuralDNF model that uses an MLP for predicate invention instead of
+    NeuralDNFPredicateInventor. The MLP takes all features as input and outputs
+    invented predicates.
+    """
+
+    predicate_inventor: nn.Sequential
+
+    def __init__(
+        self,
+        predicate_inventor_dims: list[int],
+        num_conjunctions: int,
+        c2b: bool = False,
+        manually_sparse_conj_layer_k: int | None = None,
+    ):
+        super().__init__()
+
+        self.predicate_inventor_dims = predicate_inventor_dims
+        self.num_conjunctions = num_conjunctions
+        self.c2b = c2b
+        self.manually_sparse_conj_layer_k = manually_sparse_conj_layer_k
+
+        # Replace the predicate inventor with an MLP
+        self.predicate_inventor = nn.Sequential(
+            nn.Linear(
+                (
+                    COVERTYPE_C2B_TOTAL_NUM_FEATURES
+                    if c2b
+                    else COVERTYPE_TOTAL_NUM_FEATURES
+                ),
+                predicate_inventor_dims[0],
+            ),
+            nn.Tanh(),
+            *[
+                nn.Linear(d_in, d_out)
+                for d_in, d_out in zip(
+                    predicate_inventor_dims[:-1], predicate_inventor_dims[1:]
+                )
+            ],
+        )
+
+        self.ndnf_num_input_features = predicate_inventor_dims[-1]
+
+        self.ndnf = self._create_ndnf_model()
+
+        self.manually_sparse_conj_layer_k = manually_sparse_conj_layer_k
+        if (
+            manually_sparse_conj_layer_k is not None
+            and manually_sparse_conj_layer_k > 0
+        ):
+            # Manually set some
+            self.manually_sparse_conjunctive_layer()
+
+    def get_invented_predicates(
+        self, x: Tensor, discretised: bool = False
+    ) -> Tensor:
+        """
+        This function computes the invented predicates from the all features
+        of the input data using an MLP, and concatenates them with the binary
+        features.
+        """
+        # x: B x 44 or B x 16
+        # Get invented predicates from MLP
+        invented_predicates = self.predicate_inventor(x)
+        # invented_predicates: B x IP
+        invented_predicates = torch.tanh(invented_predicates)
+
+        if discretised:
+            # Discretise the invented predicates
+            invented_predicates = torch.sign(invented_predicates)
+
+        return invented_predicates
+
+
+class CoverTypeMLPPINeuralDNF(CoverTypeMLPPIBaseNeuralDNF):
+    """
+    This class is not expected to be trained directly.
+    """
+
+    ndnf: NeuralDNF
+
+    def _create_ndnf_model(self) -> NeuralDNF:
+        return NeuralDNF(
+            n_in=self.ndnf_num_input_features,
+            n_conjunctions=self.num_conjunctions,
+            n_out=COVERTYPE_NUM_CLASSES,
+            delta=1.0,
+        )
+
+    def change_ndnf(self, new_ndnf: NeuralDNF) -> None:
+        self.ndnf = new_ndnf
+
+
+class CoverTypeMLPPINeuralDNFMT(CoverTypeMLPPIBaseNeuralDNF):
+    ndnf: NeuralDNFMutexTanh
+
+    def _create_ndnf_model(self) -> NeuralDNFMutexTanh:
+        return NeuralDNFMutexTanh(
+            n_in=self.ndnf_num_input_features,
+            n_conjunctions=self.num_conjunctions,
+            n_out=COVERTYPE_NUM_CLASSES,
+            delta=1.0,
+        )
+
+    def forward(
+        self, x: Tensor, discretise_invented_predicate: bool = False
+    ) -> Tensor:
+        """
+        Returns the raw logits of the model. This is useful for training with
+        CrossEntropyLoss.
+        """
+        # x: B x 44 or B x 16
+        x = self.get_invented_predicates(x, discretise_invented_predicate)
+        # x: B x (9 * IP + 35) or B x (9 * IP + 7)
+        return self.ndnf.get_raw_output(x)
+
+    def get_all_forms(
+        self, x: Tensor, discretise_invented_predicate: bool = False
+    ) -> dict[str, dict[str, Tensor]]:
+        # x: B x 44 or B x 16
+        x = self.get_invented_predicates(x, discretise_invented_predicate)
+        # x: B x (9 * IP + 35) or B x (9 * IP + 7)
+        return self.ndnf.get_all_forms(x)
+
+    def to_ndnf_model(self) -> CoverTypeMLPPINeuralDNF:
+        ndnf_model = CoverTypeMLPPINeuralDNF(
+            predicate_inventor_dims=self.predicate_inventor_dims,
+            num_conjunctions=self.num_conjunctions,
+            c2b=self.c2b,
+            manually_sparse_conj_layer_k=self.manually_sparse_conj_layer_k,
+        )
+        ndnf_model.ndnf = self.ndnf.to_ndnf()
+        return ndnf_model
+
+
 def construct_model(cfg: DictConfig) -> CoverTypeClassifier:
     if cfg["model_type"] in ["eo", "mt"]:
-        ndnf_class = (
-            CoverTypeNeuralDNFEO
-            if cfg["model_type"] == "eo"
-            else CoverTypeNeuralDNFMT
-        )
-        return ndnf_class(
-            invented_predicate_per_input=cfg["model_architecture"][
-                "invented_predicate_per_input"
-            ],
-            num_conjunctions=cfg["model_architecture"]["n_conjunctions"],
-            predicate_inventor_tau=cfg["model_architecture"].get(
-                "predicate_inventor_tau", 1.0
-            ),
-            c2b=cfg.get("convert_categorical_to_binary_encoding", False),
-            manually_sparse_conj_layer_k=cfg["model_architecture"].get(
-                "manually_sparse_conj_layer_k", None
-            ),
-        )
+        if (
+            cfg["model_architecture"].get("predicate_inventor_mlp_dims", None)
+            is not None
+        ):
+            return CoverTypeMLPPINeuralDNFMT(
+                predicate_inventor_dims=cfg["model_architecture"][
+                    "predicate_inventor_mlp_dims"
+                ],
+                num_conjunctions=cfg["model_architecture"]["n_conjunctions"],
+                c2b=cfg.get("convert_categorical_to_binary_encoding", False),
+                manually_sparse_conj_layer_k=cfg["model_architecture"].get(
+                    "manually_sparse_conj_layer_k", None
+                ),
+            )
+        else:
+            ndnf_class = (
+                CoverTypeThresholdPINeuralDNFEO
+                if cfg["model_type"] == "eo"
+                else CoverTypeThresholdPINeuralDNFMT
+            )
+            return ndnf_class(
+                invented_predicate_per_input=cfg["model_architecture"][
+                    "invented_predicate_per_input"
+                ],
+                num_conjunctions=cfg["model_architecture"]["n_conjunctions"],
+                predicate_inventor_tau=cfg["model_architecture"].get(
+                    "predicate_inventor_tau", 1.0
+                ),
+                c2b=cfg.get("convert_categorical_to_binary_encoding", False),
+                manually_sparse_conj_layer_k=cfg["model_architecture"].get(
+                    "manually_sparse_conj_layer_k", None
+                ),
+            )
 
     return CoverTypeMLP(
         num_latent=cfg["model_architecture"]["num_latent"],
