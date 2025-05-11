@@ -51,8 +51,8 @@ from covertype.data_utils_covertype import (
     get_x_and_y_covertype,
 )
 from covertype.models import (
-    COVERTYPE_NUM_CLASSES,
     CoverTypeMLPPINeuralDNFMT,
+    construct_model,
 )
 
 NON_TRAIN_LOADER_BATCH_SIZE = 4096
@@ -437,16 +437,8 @@ def train(
     )
 
     # Model
-    model = CoverTypeMLPPINeuralDNFMT(
-        predicate_inventor_dims=training_cfg["model_architecture"][
-            "predicate_inventor_mlp_dims"
-        ],
-        num_conjunctions=training_cfg["model_architecture"]["n_conjunctions"],
-        c2b=training_cfg.get("convert_categorical_to_binary_encoding", False),
-        manually_sparse_conj_layer_k=training_cfg["model_architecture"].get(
-            "manually_sparse_conj_layer_k", None
-        ),
-    )
+    model = construct_model(training_cfg)
+    assert isinstance(model, CoverTypeMLPPINeuralDNFMT)
     model.to(device)
     log.info(f"Model: {model}")
 

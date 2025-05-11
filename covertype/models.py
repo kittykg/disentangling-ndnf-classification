@@ -107,7 +107,7 @@ class CoverTypeBaseNeuralDNF(CoverTypeClassifier):
     ) -> Tensor:
         # x: B x 44 or B x 16
         x = self.get_invented_predicates(x, discretise_invented_predicate)
-        # x: B x (9 * IP + 35) or B x (9 * IP + 7)
+        # x: B x (9 * IP + 35) or B x (9 * IP + 7) or B x IP
         return self.ndnf(x)
 
     def get_weight_reg_loss(self) -> Tensor:
@@ -429,6 +429,11 @@ class CoverTypeMLPPINeuralDNFMT(CoverTypeMLPPIBaseNeuralDNF):
             manually_sparse_conj_layer_k=self.manually_sparse_conj_layer_k,
         )
         ndnf_model.ndnf = self.ndnf.to_ndnf()
+        # copy the sequential model
+        ndnf_model.predicate_inventor.load_state_dict(
+            self.predicate_inventor.state_dict()
+        )
+
         return ndnf_model
 
 
