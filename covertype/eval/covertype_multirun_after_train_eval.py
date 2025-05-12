@@ -46,9 +46,10 @@ from covertype.eval.eval_common import (
     AFTER_TRAIN_MODEL_BASE_NAME,
 )
 from covertype.models import (
-    CoverTypeNeuralDNFEO,
-    CoverTypeNeuralDNFMT,
-    CoverTypeNeuralDNF,
+    CoverTypeThresholdPINeuralDNFEO,
+    CoverTypeThresholdPINeuralDNFMT,
+    CoverTypeMLPPINeuralDNFMT,
+    CoverTypeBaseNeuralDNF,
     construct_model,
 )
 
@@ -110,7 +111,14 @@ def multirun_after_train_eval(cfg: DictConfig) -> None:
             weights_only=True,
         )
         model.load_state_dict(model_state)
-        if isinstance(model, (CoverTypeNeuralDNFEO, CoverTypeNeuralDNFMT)):
+        if isinstance(
+            model,
+            (
+                CoverTypeThresholdPINeuralDNFEO,
+                CoverTypeThresholdPINeuralDNFMT,
+                CoverTypeMLPPINeuralDNFMT,
+            ),
+        ):
             model = model.to_ndnf_model()
         model.eval()
 
@@ -120,18 +128,18 @@ def multirun_after_train_eval(cfg: DictConfig) -> None:
         single_eval_results.append(
             parse_eval_return_meters_with_logging(
                 raw_eval_dict,
-                f"CoverType-{'NDNF' if isinstance(model, CoverTypeNeuralDNF) else 'MLP'}",
+                f"CoverType-{'NDNF' if isinstance(model, CoverTypeBaseNeuralDNF) else 'MLP'}",
                 do_logging=False,
             )
         )
         eval_log = parse_eval_return_meters_with_logging(
             raw_eval_dict,
-            f"CoverType-{'NDNF' if isinstance(model, CoverTypeNeuralDNF) else 'MLP'}",
+            f"CoverType-{'NDNF' if isinstance(model, CoverTypeBaseNeuralDNF) else 'MLP'}",
             do_logging=True,
         )
 
-        # with open(model_dir / f"after_train_eval_result.json", "w") as f:
-        #     json.dump(eval_log, f, indent=4)
+        with open(model_dir / f"after_train_eval_result.json", "w") as f:
+            json.dump(eval_log, f, indent=4)
 
         log.info("============================================================")
 
@@ -152,8 +160,8 @@ def multirun_after_train_eval(cfg: DictConfig) -> None:
     for k, v in return_dict.items():
         log.info(f"{k}: {v:.3f}")
 
-    # with open("after_train_eval_synthesized_result.json", "w") as f:
-    #     json.dump(return_dict, f, indent=4)
+    with open("after_train_eval_synthesized_result.json", "w") as f:
+        json.dump(return_dict, f, indent=4)
 
 
 @hydra.main(version_base=None, config_path="../../conf", config_name="config")

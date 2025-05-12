@@ -1,22 +1,11 @@
-experiment_name: covertype_ndnf_mt_pi16_nc128_b128_dds_mon_linear_e200
-multirun_seeds: [
-  38,
-  699,
-  983,
-  1191,
-  2950,
-  3496,
-  4082,
-  4270,
-  4335,
-  4833,
-  5579,
-  6047,
-  7250,
-  7840,
-  8582,
-  8659,
-]
+experiment_name: covertype_c2b_ndnf_mt_pi6_nc160_msc40_b128_dds_mon_linear_e200
+multirun_seeds: [846, 1520, 2491, 3782, 4997, 5324, 5886, 7036, 7671, 8582]
+
+# experiment_name: covertype_c2b_ndnf_mt_pi4_nc64_b128_dds_mon_linear_e200
+# multirun_seeds: [603, 762, 2431, 2951, 4299, 5684, 7091, 7283, 9163, 9188]
+
+# experiment_name: covertype_c2b_ndnf_mt_pi6_nc128_msc15_b128_dds_mon_linear_e200
+# multirun_seeds: [7460]
 
 use_cuda: True
 use_mps: False
@@ -26,9 +15,12 @@ val_seed: 73
 
 model_type: mt
 model_architecture:
-  invented_predicate_per_input: 16
-  n_conjunctions: 128
+  invented_predicate_per_input: 6
+  n_conjunctions: 160
+  manually_sparse_conj_layer_k: 40
   predicate_inventor_tau: 0.1
 
-discretisation_method: threshold # 'threshold' or 'disentangle'
+convert_categorical_to_binary_encoding: True
+
+discretisation_method: disentangle # 'threshold' or 'disentangle'
 storage_dir: ??? # overwrite this

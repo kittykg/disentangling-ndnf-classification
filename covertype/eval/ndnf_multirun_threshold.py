@@ -55,9 +55,9 @@ from covertype.eval.eval_common import (
 )
 from covertype.eval.ndnf_multirun_prune import multiround_prune
 from covertype.models import (
-    CoverTypeNeuralDNFEO,
-    CoverTypeNeuralDNFMT,
-    CoverTypeNeuralDNF,
+    CoverTypeThresholdPINeuralDNFEO,
+    CoverTypeThresholdPINeuralDNFMT,
+    CoverTypeThresholdPINeuralDNF,
     construct_model,
 )
 
@@ -65,7 +65,7 @@ log = logging.getLogger()
 
 
 def single_model_threshold(
-    model: CoverTypeNeuralDNF,
+    model: CoverTypeThresholdPINeuralDNF,
     device: torch.device,
     train_loader: DataLoader,
     val_loader: DataLoader,
@@ -247,7 +247,10 @@ def multirun_threshold(cfg: DictConfig) -> None:
             / f"{caps_experiment_name}-{s}"
         )
         model = construct_model(eval_cfg)
-        assert isinstance(model, (CoverTypeNeuralDNFEO, CoverTypeNeuralDNFMT))
+        assert isinstance(
+            model,
+            (CoverTypeThresholdPINeuralDNFEO, CoverTypeThresholdPINeuralDNFMT),
+        )
 
         model = model.to_ndnf_model()
         model.to(device)

@@ -51,9 +51,11 @@ from covertype.eval.eval_common import (
     FIRST_PRUNE_MODEL_BASE_NAME,
 )
 from covertype.models import (
-    CoverTypeNeuralDNFEO,
-    CoverTypeNeuralDNFMT,
-    CoverTypeNeuralDNF,
+    CoverTypeThresholdPINeuralDNFEO,
+    CoverTypeThresholdPINeuralDNFMT,
+    CoverTypeThresholdPINeuralDNF,
+    CoverTypeMLPPINeuralDNFMT,
+    CoverTypeMLPPINeuralDNF,
     construct_model,
 )
 
@@ -121,7 +123,7 @@ def comparison_fn(
 
 
 def multiround_prune(
-    model: CoverTypeNeuralDNF,
+    model: CoverTypeThresholdPINeuralDNF | CoverTypeMLPPINeuralDNF,
     device: torch.device,
     train_loader: DataLoader,
     eval_log_fn: Callable[[dict[str, Any]], dict[str, float]],
@@ -189,7 +191,7 @@ def multiround_prune(
 
 
 def single_model_prune(
-    model: CoverTypeNeuralDNF,
+    model: CoverTypeThresholdPINeuralDNF | CoverTypeMLPPINeuralDNF,
     device: torch.device,
     train_loader: DataLoader,
     val_loader: DataLoader,
@@ -320,7 +322,14 @@ def multirun_prune(cfg: DictConfig) -> None:
             / f"{caps_experiment_name}-{s}"
         )
         model = construct_model(eval_cfg)
-        assert isinstance(model, (CoverTypeNeuralDNFEO, CoverTypeNeuralDNFMT))
+        assert isinstance(
+            model,
+            (
+                CoverTypeThresholdPINeuralDNFEO,
+                CoverTypeThresholdPINeuralDNFMT,
+                CoverTypeMLPPINeuralDNFMT,
+            ),
+        )
         model.to(device)
         model_state = torch.load(
             model_dir / f"{AFTER_TRAIN_MODEL_BASE_NAME}.pth",

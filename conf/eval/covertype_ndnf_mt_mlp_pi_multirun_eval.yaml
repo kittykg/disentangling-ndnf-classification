@@ -1,0 +1,19 @@
+experiment_name: covertype_c2b_us_ndnf_mt_mlp_pi_nc64_msc40_b128_dds_mon_linear_e200
+multirun_seeds: [1639, 1930, 3010, 4654, 5190, 6278, 6884, 7271, 8075, 8969]
+
+use_cuda: True
+use_mps: False
+
+val_size: 0.3
+val_seed: 73
+
+model_type: mt
+model_architecture:
+  n_conjunctions: 64
+  manually_sparse_conj_layer_k: 40
+  predicate_inventor_mlp_dims: [128, 64]  # MLP dimensions for predicate invention
+
+convert_categorical_to_binary_encoding: True
+
+discretisation_method: disentangle # 'threshold' or 'disentangle'
+storage_dir: ??? # overwrite this

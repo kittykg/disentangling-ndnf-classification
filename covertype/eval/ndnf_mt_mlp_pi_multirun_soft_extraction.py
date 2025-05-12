@@ -1,8 +1,8 @@
 """
-This script thresholds prunedCarNDNFMT model. The input models are strictly
-after pruning stage in the post-training processing pipeline. The thresholed
-NDNF models are stored and evaluated. The evaluation metrics include accuracy,
-sample Jaccard and macro Jaccard.
+This script thresholds pruned CoverTypeMLPPINeuralDNFMT model. The input models are
+strictly after pruning stage in the post-training processing pipeline. The
+thresholed NDNF models are stored and evaluated. The evaluation metrics include
+accuracy, sample Jaccard and macro Jaccard.
 """
 
 from datetime import datetime
@@ -45,27 +45,30 @@ except ValueError:  # Already removed
 from analysis import synthesize, AccuracyMeter, JaccardScoreMeter, ErrorMeter
 from utils import post_to_discord_webhook
 
-from car.data_utils_car import get_car_data_np_from_path, CarDataset
-from car.eval.eval_common import (
+from covertype.data_utils_covertype import (
+    get_covertype_data_np_from_path,
+    CoverTypeDataset,
+)
+from covertype.eval.eval_common import (
     EVAL_RELEVANT_KEYS,
     EVAL_ERROR_DICT_RELEVANT_KEYS,
-    car_classifier_eval,
+    covertype_classifier_eval,
     parse_eval_return_meters_with_logging,
     DEFAULT_GEN_SEED,
-    DEFAULT_LOADER_BATCH_SIZE,
     DEFAULT_LOADER_NUM_WORKERS,
     FIRST_PRUNE_MODEL_BASE_NAME,
 )
-from car.eval.ndnf_multirun_prune import multiround_prune, comparison_fn
-from car.models import (
-    CarBaseNeuralDNF,
-    CarNeuralDNFMT,
-    CarNeuralDNF,
+from covertype.eval.ndnf_multirun_prune import multiround_prune, comparison_fn
+from covertype.models import (
+    CoverTypeMLPPINeuralDNFMT,
+    CoverTypeMLPPINeuralDNF,
     construct_model,
 )
 
 log = logging.getLogger()
 
+
+DEFAULT_LOADER_BATCH_SIZE = 2**11
 
 SOFT_EXTRCT_THRESHOLD_MODEL_BASE_NAME = "model_soft_extract_thresholded"
 SOFT_EXTRCT_THRESHOLD_RESULT_JSON_BASE_NAME = "soft_extract_threshold_result"
@@ -74,21 +77,28 @@ SOFT_EXTRCT_DISENTANGLED_RESULT_JSON_BASE_NAME = (
     "soft_extract_disentangled_result"
 )
 
+DEFAULT_COMPUTE_ERROR_DICT = False
 
-class BaseChainedNeuralDNF(CarBaseNeuralDNF):
+
+class BaseChainedNeuralDNF(CoverTypeMLPPINeuralDNFMT):
     sub_ndnf: NeuralDNF
     disjunctive_layer: BaseSemiSymbolic
 
     def __init__(
-        self, sub_ndnf: NeuralDNF, disjunctive_layer: BaseSemiSymbolic
+        self,
+        predicate_inventor_dims: list[int],
+        sub_ndnf: NeuralDNF,
+        disjunctive_layer: BaseSemiSymbolic,
+        c2b: bool = False,
     ):
         assert disjunctive_layer.layer_type == SemiSymbolicLayerType.DISJUNCTION
         assert (
             disjunctive_layer.in_features == sub_ndnf.disjunctions.out_features
         )
         super().__init__(
+            predicate_inventor_dims=predicate_inventor_dims,
             num_conjunctions=sub_ndnf.conjunctions.out_features,
-            num_features=sub_ndnf.conjunctions.in_features,
+            c2b=c2b,
         )
         self.sub_ndnf = sub_ndnf
         self.disjunctive_layer = disjunctive_layer
@@ -108,29 +118,34 @@ class BaseChainedNeuralDNF(CarBaseNeuralDNF):
         # to avoid confusion. The `sub_ndnf` is used instead.
         return None
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(
+        self, x: Tensor, discretise_invented_predicate: bool = False
+    ) -> Tensor:
+        # x: B x 44
+        x = self.get_invented_predicates(x, discretise_invented_predicate)
+        # x: B x IP
         x = self.sub_ndnf(x)
         x = torch.tanh(x)
         return self.disjunctive_layer(x)
-
-
-# class TanhChainedNeuralDNF(BaseChainedNeuralDNF):
-#     sub_ndnf: NeuralDNF
-#     disjunctive_layer: SemiSymbolic
 
 
 class MutexTanhChainedNeuralDNF(BaseChainedNeuralDNF):
     sub_ndnf: NeuralDNF
     disjunctive_layer: SemiSymbolicMutexTanh
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(
+        self, x: Tensor, discretise_invented_predicate: bool = False
+    ) -> Tensor:
+        # x: B x 44
+        x = self.get_invented_predicates(x, discretise_invented_predicate)
+        # x: B x IP
         x = self.sub_ndnf(x)
         x = torch.tanh(x)
         return self.disjunctive_layer.get_raw_output(x)
 
 
 def threshold_conjunctive_layer(
-    model: CarNeuralDNF,
+    model: CoverTypeMLPPINeuralDNF,
     device: torch.device,
     train_loader: DataLoader,
     do_logging: bool = False,
@@ -154,51 +169,73 @@ def threshold_conjunctive_layer(
         model.ndnf.conjunctions.weights.data = (
             (torch.abs(og_conj_weight) > v) * torch.sign(og_conj_weight) * 6.0
         )
-        threshold_eval_dict = car_classifier_eval(model, device, train_loader)
+        threshold_eval_dict = covertype_classifier_eval(
+            model,
+            device,
+            train_loader,
+            compute_error_dict=DEFAULT_COMPUTE_ERROR_DICT,
+        )
         acc_meter = threshold_eval_dict["acc_meter"]
         jacc_meter = threshold_eval_dict["jacc_meter"]
-        error_meter = threshold_eval_dict["error_meter"]
         assert isinstance(acc_meter, AccuracyMeter)
         assert isinstance(jacc_meter, JaccardScoreMeter)
-        assert isinstance(error_meter, ErrorMeter)
         accuracy = acc_meter.get_average()
+        f1 = acc_meter.get_other_classification_metrics("weighted")["f1"]
+        assert isinstance(f1, float)
         sample_jacc = jacc_meter.get_average("samples")
         macro_jacc = jacc_meter.get_average("macro")
         assert isinstance(sample_jacc, float)
         assert isinstance(macro_jacc, float)
-        overall_error_rate = error_meter.get_average()["overall_error_rate"]
+        if DEFAULT_COMPUTE_ERROR_DICT:
+            error_meter = threshold_eval_dict["error_meter"]
+            assert isinstance(error_meter, ErrorMeter)
+            overall_error_rate = error_meter.get_average()["overall_error_rate"]
 
         result_dicts_with_t_val.append(
             {
                 "t_val": v.item(),
                 "accuracy": accuracy,
+                "f1": f1,
                 "sample_jacc": sample_jacc,
                 "macro_jacc": macro_jacc,
-                "overall_error_rate": overall_error_rate,
             }
         )
+        if DEFAULT_COMPUTE_ERROR_DICT:
+            assert isinstance(overall_error_rate, float)
+            result_dicts_with_t_val[-1][
+                "overall_error_rate"
+            ] = overall_error_rate
 
-    sorted_result_dicts: list[dict[str, float]] = sorted(
-        result_dicts_with_t_val,
-        key=lambda x: (
+    if DEFAULT_COMPUTE_ERROR_DICT:
+        sort_fn = lambda x: (
+            x["f1"],
             -x["overall_error_rate"],
             x["sample_jacc"],
             x["accuracy"],
-        ),
+        )
+    else:
+        sort_fn = lambda x: (x["f1"], x["accuracy"], x["sample_jacc"])
+    sorted_result_dicts: list[dict[str, float]] = sorted(
+        result_dicts_with_t_val,
+        key=sort_fn,
         reverse=True,
     )
 
     if do_logging:
         log.info("Top 5 thresholding candidates:")
         for i, d in enumerate(sorted_result_dicts[:5]):
-            log.info(
+            log_info_str = (
                 f"-- Candidate {i + 1} --\n"
                 f"\tt_val: {d['t_val']:.2f}  "
                 f"Acc: {d['accuracy']:.3f}  "
+                f"F1: {d['f1']:.3f}  "
                 f"Sample Jacc: {d['sample_jacc']:.3f}  "
-                f"Macro Jacc: {d['macro_jacc']:.3f}  "
-                f"Overall Error Rate: {d['overall_error_rate']:.3f}"
+                f"Macro Jacc: {d['macro_jacc']:.3f}"
             )
+            if DEFAULT_COMPUTE_ERROR_DICT:
+                log_info_str += (
+                    f"  Overall Error Rate: {d['overall_error_rate']:.3f}"
+                )
 
     # Apply the best threshold
     best_t_val = sorted_result_dicts[0]["t_val"]
@@ -211,8 +248,14 @@ def threshold_conjunctive_layer(
     return best_t_val
 
 
-def disentangle_conjunctive_layer(model: CarNeuralDNF) -> BaseChainedNeuralDNF:
-    log.info("Disentangling the model...")
+def disentangle_conjunctive_layer(
+    model: CoverTypeMLPPINeuralDNF,
+    positive_j_minus_limit: int = -1,
+) -> BaseChainedNeuralDNF:
+    log.info(
+        "Disentangling the model with positive j_minus_limit: "
+        f"{positive_j_minus_limit}"
+    )
 
     # Remember the disjunction-conjunction mapping
     conj_w = model.ndnf.conjunctions.weights.data.clone().detach().cpu()
@@ -235,7 +278,13 @@ def disentangle_conjunctive_layer(model: CarNeuralDNF) -> BaseChainedNeuralDNF:
     # split the conjunctions
     splitted_conj: dict[int, list[Tensor]] = dict()
     for conj_id in unique_conj_ids:
-        ret = split_entangled_conjunction(conj_w[conj_id])
+        log.info(
+            f"Splitting conjunction {conj_id} with {torch.count_nonzero(conj_w[conj_id]).item()} non-zero weights"
+        )
+        ret = split_entangled_conjunction(
+            conj_w[conj_id],
+            positive_disentangle_j_minus_limit=positive_j_minus_limit,
+        )
 
         if ret is None:
             log.info(f"Conj {conj_id} is skipped")
@@ -298,8 +347,16 @@ def disentangle_conjunctive_layer(model: CarNeuralDNF) -> BaseChainedNeuralDNF:
             ] = disj_w[disj_id, cid]
 
     chained_ndnf = MutexTanhChainedNeuralDNF(
+        predicate_inventor_dims=model.predicate_inventor_dims,
         sub_ndnf=sub_ndnf_conj,
         disjunctive_layer=disjunctive_layer,
+        c2b=model.c2b,
+    )
+    chained_ndnf.to(model.ndnf.conjunctions.weights.device)
+
+    # Load the mlp pi model
+    chained_ndnf.predicate_inventor.load_state_dict(
+        model.predicate_inventor.state_dict()
     )
 
     return chained_ndnf
@@ -312,8 +369,14 @@ def prune_chained_ndnf(
     eval_log_fn: Callable[[dict[str, Any]], dict[str, float]],
 ) -> int:
     prune_eval_fn = lambda: parse_eval_return_meters_with_logging(
-        car_classifier_eval(chained_ndnf, device, train_loader),
+        covertype_classifier_eval(
+            chained_ndnf,
+            device,
+            train_loader,
+            compute_error_dict=DEFAULT_COMPUTE_ERROR_DICT,
+        ),
         model_name="Prune (intermediate)",
+        check_error_meter=DEFAULT_COMPUTE_ERROR_DICT,
         do_logging=False,
     )
 
@@ -352,8 +415,8 @@ def prune_chained_ndnf(
         log.info(f"Prune iteraiton {prune_iteration}")
         start_time = datetime.now()
 
-        # Prune the disjunctive layer first
-        disj_pruned_count = prune_disjunctive_layer()
+        # Prune the disjunctive layer, commented out for now
+        # disj_pruned_count = prune_disjunctive_layer()
 
         # Prune the conjunctive DNF next
         prune_result_dict_conj = prune_neural_dnf(
@@ -375,7 +438,7 @@ def prune_chained_ndnf(
 
         end_time = datetime.now()
         log.info(f"\tTime taken: {end_time - start_time}")
-        log.info(f"\tDisjunctive prune count: {disj_pruned_count}")
+        # log.info(f"\tDisjunctive prune count: {disj_pruned_count}")
         log.info(
             f"\tPruned disjunction count: {prune_result_dict_conj['disj_prune_count_1']}"
         )
@@ -394,7 +457,7 @@ def prune_chained_ndnf(
         # continue pruning
         if (
             any([prune_result_dict_conj[k] != 0 for k in important_keys])
-            or disj_pruned_count != 0
+            # or disj_pruned_count != 0
         ):
             prune_iteration += 1
         else:
@@ -404,22 +467,34 @@ def prune_chained_ndnf(
 
 
 def single_model_soft_extract(
-    model: CarNeuralDNF,
+    model: CoverTypeMLPPINeuralDNF,
     device: torch.device,
     train_loader: DataLoader,
     val_loader: DataLoader,
     test_loader: DataLoader,
     model_dir: Path,
     conjunctive_layer_process_method: str = "threshold",
+    limit_split: int = -1,
 ) -> dict[str, Any]:
     def _eval_with_log_wrapper(
         model_name: str, data_loader: DataLoader = val_loader
     ) -> dict[str, float]:
-        eval_meters = car_classifier_eval(model, device, data_loader)
-        return parse_eval_return_meters_with_logging(eval_meters, model_name)
+        eval_meters = covertype_classifier_eval(
+            model,
+            device,
+            data_loader,
+            compute_error_dict=DEFAULT_COMPUTE_ERROR_DICT,
+        )
+        return parse_eval_return_meters_with_logging(
+            eval_meters,
+            model_name,
+            check_error_meter=DEFAULT_COMPUTE_ERROR_DICT,
+        )
 
     # Stage 1: Evaluate the pruned model
-    prune_log = _eval_with_log_wrapper("Pruned Car NDNF (test)", test_loader)
+    prune_log = _eval_with_log_wrapper(
+        "Pruned CoverType NDNF (test)", test_loader
+    )
     log.info("------------------------------------------")
 
     # Stage 2: Process the conjunctive layer
@@ -464,14 +539,44 @@ def single_model_soft_extract(
         # ==================================================================== #
         # Step 2.1b: Disentangle the conjunctive layer
         # ==================================================================== #
-        chained_model = disentangle_conjunctive_layer(model)
-        print(chained_model)
+
+        if (model_dir / "temp_chained.pth").exists():
+            sd = torch.load(model_dir / "temp_chained.pth", map_location=device)
+            chained_model = MutexTanhChainedNeuralDNF(
+                predicate_inventor_dims=model.predicate_inventor_dims,
+                sub_ndnf=NeuralDNF(
+                    n_in=sd["sub_ndnf.conjunctions.weights"].shape[1],
+                    n_conjunctions=sd["sub_ndnf.conjunctions.weights"].shape[0],
+                    n_out=sd["sub_ndnf.disjunctions.weights"].shape[0],
+                    delta=1.0,
+                ),
+                disjunctive_layer=SemiSymbolicMutexTanh(
+                    in_features=sd["disjunctive_layer.weights"].shape[1],
+                    out_features=sd["disjunctive_layer.weights"].shape[0],
+                    layer_type=SemiSymbolicLayerType.DISJUNCTION,
+                    delta=1.0,
+                ),
+                c2b=model.c2b,
+            )
+            chained_model.load_state_dict(sd)
+            log.info("Loaded the temp chained model")
+        else:
+            chained_model = disentangle_conjunctive_layer(model, limit_split)
+            torch.save(chained_model.state_dict(), "temp_chained.pth")
+
+        log.info(chained_model)
         chained_model.to(device)
         chained_model.eval()
 
         intermediate_pre_prune_log = parse_eval_return_meters_with_logging(
-            car_classifier_eval(chained_model, device, val_loader),
+            covertype_classifier_eval(
+                chained_model,
+                device,
+                val_loader,
+                compute_error_dict=DEFAULT_COMPUTE_ERROR_DICT,
+            ),
             model_name="Pre-prune chained NDNF model (val)",
+            check_error_meter=DEFAULT_COMPUTE_ERROR_DICT,
         )
         log.info("------------------------------------------")
 
@@ -483,14 +588,26 @@ def single_model_soft_extract(
             device,
             train_loader,
             lambda x: parse_eval_return_meters_with_logging(
-                car_classifier_eval(chained_model, device, val_loader),
+                covertype_classifier_eval(
+                    chained_model,
+                    device,
+                    val_loader,
+                    compute_error_dict=DEFAULT_COMPUTE_ERROR_DICT,
+                ),
                 model_name=x["model_name"],
+                check_error_meter=DEFAULT_COMPUTE_ERROR_DICT,
             ),
         )
 
         pruned_chained_ndnf_log = parse_eval_return_meters_with_logging(
-            car_classifier_eval(chained_model, device, val_loader),
+            covertype_classifier_eval(
+                chained_model,
+                device,
+                val_loader,
+                compute_error_dict=DEFAULT_COMPUTE_ERROR_DICT,
+            ),
             model_name="Pruned chained NDNF model (val)",
+            check_error_meter=DEFAULT_COMPUTE_ERROR_DICT,
         )
         log.info("------------------------------------------")
 
@@ -541,6 +658,7 @@ def single_model_soft_extract(
             stats = json.load(f)
 
         chained_model = MutexTanhChainedNeuralDNF(
+            predicate_inventor_dims=model.predicate_inventor_dims,
             sub_ndnf=NeuralDNF(
                 stats["sub_ndnf_in"],
                 stats["sub_ndnf_n_conunctions"],
@@ -553,6 +671,7 @@ def single_model_soft_extract(
                 SemiSymbolicLayerType.DISJUNCTION,
                 1.0,
             ),
+            c2b=model.c2b,
         )
         chained_model.to(device)
         chained_model.load_state_dict(
@@ -561,8 +680,14 @@ def single_model_soft_extract(
         chained_model.eval()
 
         pruned_chained_ndnf_log = parse_eval_return_meters_with_logging(
-            car_classifier_eval(chained_model, device, test_loader),
+            covertype_classifier_eval(
+                chained_model,
+                device,
+                test_loader,
+                compute_error_dict=DEFAULT_COMPUTE_ERROR_DICT,
+            ),
             "Pruned chained NDNF model(test)",
+            check_error_meter=DEFAULT_COMPUTE_ERROR_DICT,
         )
     else:
         ret = process_conjunctive_layer_disentangle()
@@ -571,8 +696,14 @@ def single_model_soft_extract(
 
         torch.save(chained_model.state_dict(), model_path)
         pruned_chained_ndnf_log = parse_eval_return_meters_with_logging(
-            car_classifier_eval(chained_model, device, test_loader),
+            covertype_classifier_eval(
+                chained_model,
+                device,
+                test_loader,
+                compute_error_dict=DEFAULT_COMPUTE_ERROR_DICT,
+            ),
             "Pruned chained NDNF model (test)",
+            check_error_meter=DEFAULT_COMPUTE_ERROR_DICT,
         )
 
         disentanglement_result = {
@@ -616,10 +747,10 @@ def multirun_soft_extraction(cfg: DictConfig) -> None:
     log.info(f"Device: {device}")
 
     # Load test data
-    hold_out_test_X, hold_out_test_y = get_car_data_np_from_path(
+    hold_out_test_X, hold_out_test_y = get_covertype_data_np_from_path(
         cfg["dataset"], is_test=True
     )
-    test_dataset = CarDataset(hold_out_test_X, hold_out_test_y)
+    test_dataset = CoverTypeDataset(hold_out_test_X, hold_out_test_y)
     test_loader = DataLoader(
         test_dataset,
         batch_size=DEFAULT_LOADER_BATCH_SIZE,
@@ -644,8 +775,8 @@ def multirun_soft_extraction(cfg: DictConfig) -> None:
             / caps_experiment_name
             / f"{caps_experiment_name}-{s}"
         )
-        model = construct_model(eval_cfg, num_features=hold_out_test_X.shape[1])
-        assert isinstance(model, CarNeuralDNFMT)
+        model = construct_model(eval_cfg)
+        assert isinstance(model, CoverTypeMLPPINeuralDNFMT)
 
         model = model.to_ndnf_model()
         model.to(device)
@@ -658,15 +789,24 @@ def multirun_soft_extraction(cfg: DictConfig) -> None:
         model.load_state_dict(model_state)
 
         # Data loaders
-        X, y = get_car_data_np_from_path(cfg["dataset"], is_test=False)
-        X_train, X_val, y_train, y_val = train_test_split(
+        X, y = get_covertype_data_np_from_path(cfg["dataset"], is_test=False)
+        X_train_og, X_val, y_train_og, y_val = train_test_split(
             X,
             y,
             test_size=eval_cfg.get("val_size", 0.2),
             random_state=eval_cfg.get("val_seed", 73),
         )
-        train_dataset = CarDataset(X_train, y_train)
-        val_dataset = CarDataset(X_val, y_val)
+        # Since covertype has a lot of instances of data entries, we further
+        # split the train dataset to use a smaller subset to speed up the
+        # pruning process
+        _, X_train, _, y_train = train_test_split(
+            X_train_og,
+            y_train_og,
+            test_size=0.4,
+            random_state=eval_cfg.get("val_seed", 73),
+        )
+        train_dataset = CoverTypeDataset(X_train, y_train)
+        val_dataset = CoverTypeDataset(X_val, y_val)
         train_loader = DataLoader(
             train_dataset,
             batch_size=DEFAULT_LOADER_BATCH_SIZE,
@@ -692,6 +832,7 @@ def multirun_soft_extraction(cfg: DictConfig) -> None:
                 conjunctive_layer_process_method=eval_cfg[
                     "discretisation_method"
                 ],
+                limit_split=eval_cfg.get("limit_split", -1),
             )
         )
         log.info("============================================================")
@@ -759,4 +900,8 @@ def run_eval(cfg: DictConfig) -> None:
 
 
 if __name__ == "__main__":
+    import warnings
+
+    warnings.filterwarnings("ignore")
+
     run_eval()

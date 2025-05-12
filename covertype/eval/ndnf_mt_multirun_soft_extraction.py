@@ -25,7 +25,6 @@ from torch.utils.data import DataLoader
 from neural_dnf.semi_symbolic import (
     BaseSemiSymbolic,
     SemiSymbolicLayerType,
-    SemiSymbolic,
     SemiSymbolicMutexTanh,
 )
 from neural_dnf.neural_dnf import NeuralDNF
@@ -62,9 +61,9 @@ from covertype.eval.eval_common import (
 )
 from covertype.eval.ndnf_multirun_prune import multiround_prune, comparison_fn
 from covertype.models import (
-    CoverTypeBaseNeuralDNF,
-    CoverTypeNeuralDNFMT,
-    CoverTypeNeuralDNF,
+    CovertTypeThresholdPIBaseNeuralDNF,
+    CoverTypeThresholdPINeuralDNFMT,
+    CoverTypeThresholdPINeuralDNF,
     construct_model,
 )
 
@@ -83,7 +82,7 @@ SOFT_EXTRCT_DISENTANGLED_RESULT_JSON_BASE_NAME = (
 DEFAULT_COMPUTE_ERROR_DICT = False
 
 
-class BaseChainedNeuralDNF(CoverTypeBaseNeuralDNF):
+class BaseChainedNeuralDNF(CovertTypeThresholdPIBaseNeuralDNF):
     sub_ndnf: NeuralDNF
     disjunctive_layer: BaseSemiSymbolic
 
@@ -141,9 +140,19 @@ class MutexTanhChainedNeuralDNF(BaseChainedNeuralDNF):
     sub_ndnf: NeuralDNF
     disjunctive_layer: SemiSymbolicMutexTanh
 
+    def forward(
+        self, x: Tensor, discretise_invented_predicate: bool = False
+    ) -> Tensor:
+        # x: B x 44
+        x = self.get_invented_predicates(x, discretise_invented_predicate)
+        # x: B x (4 * IP + 40)
+        x = self.sub_ndnf(x)
+        x = torch.tanh(x)
+        return self.disjunctive_layer.get_raw_output(x)
+
 
 def threshold_conjunctive_layer(
-    model: CoverTypeNeuralDNF,
+    model: CoverTypeThresholdPINeuralDNF,
     device: torch.device,
     train_loader: DataLoader,
     do_logging: bool = False,
@@ -247,7 +256,7 @@ def threshold_conjunctive_layer(
 
 
 def disentangle_conjunctive_layer(
-    model: CoverTypeNeuralDNF,
+    model: CoverTypeThresholdPINeuralDNF,
     positive_j_minus_limit: int = -1,
 ) -> BaseChainedNeuralDNF:
     log.info(
@@ -327,7 +336,7 @@ def disentangle_conjunctive_layer(
     # ======================================================================== #
     # Step 2: add disjunctive layer
     # ======================================================================== #
-    disjunctive_layer = SemiSymbolic(
+    disjunctive_layer = SemiSymbolicMutexTanh(
         in_features=len(sorted_used_conj_ids),
         out_features=disj_w.shape[0],
         layer_type=SemiSymbolicLayerType.DISJUNCTION,
@@ -458,7 +467,7 @@ def prune_chained_ndnf(
 
 
 def single_model_soft_extract(
-    model: CoverTypeNeuralDNF,
+    model: CoverTypeThresholdPINeuralDNF,
     device: torch.device,
     train_loader: DataLoader,
     val_loader: DataLoader,
@@ -546,7 +555,7 @@ def single_model_soft_extract(
                     n_out=sd["sub_ndnf.disjunctions.weights"].shape[0],
                     delta=1.0,
                 ),
-                disjunctive_layer=SemiSymbolic(
+                disjunctive_layer=SemiSymbolicMutexTanh(
                     in_features=sd["disjunctive_layer.weights"].shape[1],
                     out_features=sd["disjunctive_layer.weights"].shape[0],
                     layer_type=SemiSymbolicLayerType.DISJUNCTION,
@@ -675,7 +684,7 @@ def single_model_soft_extract(
                 stats["sub_ndnf_out"],
                 1.0,
             ),
-            disjunctive_layer=SemiSymbolic(
+            disjunctive_layer=SemiSymbolicMutexTanh(
                 stats["disjunctive_layer_in"],
                 stats["disjunctive_layer_out"],
                 SemiSymbolicLayerType.DISJUNCTION,
@@ -785,7 +794,7 @@ def multirun_soft_extraction(cfg: DictConfig) -> None:
             / f"{caps_experiment_name}-{s}"
         )
         model = construct_model(eval_cfg)
-        assert isinstance(model, CoverTypeNeuralDNFMT)
+        assert isinstance(model, CoverTypeThresholdPINeuralDNFMT)
 
         model = model.to_ndnf_model()
         model.to(device)
