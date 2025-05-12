@@ -120,6 +120,7 @@ def multirun_after_train_eval(cfg: DictConfig) -> None:
             ),
         ):
             model = model.to_ndnf_model()
+            model.to(device)
         model.eval()
 
         log.info(f"Evaluation of {experiment_name}_{s} starts")

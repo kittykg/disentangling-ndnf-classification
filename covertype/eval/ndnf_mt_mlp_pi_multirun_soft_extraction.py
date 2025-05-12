@@ -843,12 +843,13 @@ def multirun_soft_extraction(cfg: DictConfig) -> None:
         synth_dict = synthesize(np.array([d[k] for d in ret_dicts]))
         for sk, sv in synth_dict.items():
             return_dict[f"{k}/{sk}"] = sv
-    for k in EVAL_ERROR_DICT_RELEVANT_KEYS:
-        synth_dict = synthesize(
-            np.array([d["error_dict"][k] for d in ret_dicts])
-        )
-        for sk, sv in synth_dict.items():
-            return_dict[f"error_dict/{k}/{sk}"] = sv
+    if DEFAULT_COMPUTE_ERROR_DICT:
+        for k in EVAL_ERROR_DICT_RELEVANT_KEYS:
+            synth_dict = synthesize(
+                np.array([d["error_dict"][k] for d in ret_dicts])
+            )
+            for sk, sv in synth_dict.items():
+                return_dict[f"error_dict/{k}/{sk}"] = sv
 
     log.info("Synthesized results:")
     for k, v in return_dict.items():
