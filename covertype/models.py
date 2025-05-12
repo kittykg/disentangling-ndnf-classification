@@ -35,15 +35,18 @@ class CoverTypeClassifier(nn.Module):
 
 
 class CoverTypeMLP(CoverTypeClassifier):
-    def __init__(self, num_latent: int = 64):
+    def __init__(self, num_latents: list[int] = [64]):
         super().__init__()
 
         self.mlp = nn.Sequential(
-            nn.Linear(COVERTYPE_TOTAL_NUM_FEATURES, num_latent),
+            nn.Linear(COVERTYPE_TOTAL_NUM_FEATURES, num_latents[0]),
             nn.Tanh(),
-            nn.Linear(num_latent, num_latent),
-            nn.Tanh(),
-            nn.Linear(num_latent, COVERTYPE_NUM_CLASSES),
+            *[
+                layer
+                for d_in, d_out in zip(num_latents[:-1], num_latents[1:])
+                for layer in [nn.Linear(d_in, d_out), nn.Tanh()]
+            ],
+            nn.Linear(num_latents[-1], COVERTYPE_NUM_CLASSES),
         )
 
     def forward(self, x: Tensor) -> Tensor:
@@ -474,5 +477,5 @@ def construct_model(cfg: DictConfig) -> CoverTypeClassifier:
             )
 
     return CoverTypeMLP(
-        num_latent=cfg["model_architecture"]["num_latent"],
+        num_latents=cfg["model_architecture"]["num_latents"],
     )

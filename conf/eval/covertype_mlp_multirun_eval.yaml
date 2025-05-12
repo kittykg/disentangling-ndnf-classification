@@ -1,11 +1,11 @@
-experiment_name: covertype_mlp_l128_b128_e100
-multirun_seeds: [760, 1255, 1690, 1811, 1836, 2318, 3923, 6421, 6588, 6748, 7155, 7419, 8163, 8269, 8791, 9256]
+experiment_name: covertype_us_mlp_l258x128_b128_e100
+multirun_seeds: [1252, 1814, 1861, 4798, 4949, 5124, 5575, 5830, 6202, 7924]
 
 use_cuda: True
 use_mps: False
 
 model_type: mlp
 model_architecture:
-  num_latent: 128
+  num_latents: [256, 128]
 
 storage_dir: ??? # overwrite this

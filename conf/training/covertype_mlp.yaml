@@ -1,4 +1,4 @@
-experiment_name: covertype_mlp_l128_b128_e100
+experiment_name: covertype_us_mlp_l258x128_b128_e100
 seed: null
 
 use_cuda: True
@@ -11,7 +11,7 @@ val_seed: 73
 
 model_type: mlp
 model_architecture:
-  num_latent: 128
+  num_latents: [256, 128]
 
 optimiser: adam
 optimiser_lr: 0.001
