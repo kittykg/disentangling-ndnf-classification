@@ -215,6 +215,7 @@ def single_model_threshold(
 def post_train_threshold(cfg: DictConfig) -> None:
     eval_cfg = cfg["eval"]
     full_experiment_name = f"{eval_cfg['experiment_name']}_{eval_cfg['seed']}"
+    log.info(f"Full experiment name: {full_experiment_name}")
     run_dir_name = "-".join(
         [
             (s.upper() if i in [0] else s)

@@ -32,9 +32,9 @@ dds:
 log_lr_in_wandb: True
 scheduler:
   type: cos
-  warmup_steps: 160
+  warmup_steps: 100
   decay_rate: 0.97
-  decay_steps: 200
+  decay_steps: 100
   min_lr: 1e-6
 
 aux_loss:

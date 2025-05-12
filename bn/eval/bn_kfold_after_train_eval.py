@@ -1,7 +1,7 @@
 """
-This script evaluates a Boolean Network NeuralDNF model. The input models are
+This script evaluates a BooleanNetworkClassifier model. The input models are
 strictly after training and without any post-training processing. The evaluation
-metrics include accuracy, precision, recall, and F1 score.
+metrics include hamming loss, micro F1, and micro Jaccard.
 """
 
 import json
@@ -42,14 +42,16 @@ from bn.eval.eval_common import (
     DEFAULT_LOADER_NUM_WORKERS,
     AFTER_TRAIN_MODEL_BASE_NAME,
 )
-from bn.models import BooleanNetworkNeuralDNF, construct_model
+from bn.models import construct_model, BooleanNetworkClassifier
 
 
 log = logging.getLogger()
 
 
 def single_model_eval(
-    model: BooleanNetworkNeuralDNF, device: torch.device, val_loader: DataLoader
+    model: BooleanNetworkClassifier,
+    device: torch.device,
+    val_loader: DataLoader,
 ) -> dict[str, float]:
     def _eval_with_log_wrapper(
         model_name: str,
@@ -68,6 +70,7 @@ def single_model_eval(
 def post_train_prune(cfg: DictConfig) -> None:
     eval_cfg = cfg["eval"]
     full_experiment_name = f"{eval_cfg['experiment_name']}_{eval_cfg['seed']}"
+    log.info(f"Full experiment name: {full_experiment_name}")
     run_dir_name = "-".join(
         [
             (s.upper() if i in [0] else s)
@@ -113,7 +116,6 @@ def post_train_prune(cfg: DictConfig) -> None:
             Path(eval_cfg["storage_dir"]) / run_dir_name / f"fold_{fold_id}"
         )
         model = construct_model(cfg["eval"], bn_dataset.data.shape[2])
-        assert isinstance(model, BooleanNetworkNeuralDNF)
         model.to(device)
         model_state = torch.load(
             model_dir / f"{AFTER_TRAIN_MODEL_BASE_NAME}_fold_{fold_id}.pth",

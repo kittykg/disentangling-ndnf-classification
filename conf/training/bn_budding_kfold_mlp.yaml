@@ -1,4 +1,4 @@
-experiment_name: bn_budding_mlp_l64_b32_e300
+experiment_name: bn_budding_mlp_k10_l64_b32_e300
 seed: null
 
 use_cuda: True

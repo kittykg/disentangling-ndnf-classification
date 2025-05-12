@@ -387,6 +387,7 @@ def single_model_disentangle(
 def post_train_disentangle(cfg: DictConfig):
     eval_cfg = cfg["eval"]
     full_experiment_name = f"{eval_cfg['experiment_name']}_{eval_cfg['seed']}"
+    log.info(f"Full experiment name: {full_experiment_name}")
     run_dir_name = "-".join(
         [
             (s.upper() if i in [0] else s)

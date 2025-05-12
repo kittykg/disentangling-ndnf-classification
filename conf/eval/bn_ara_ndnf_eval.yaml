@@ -1,5 +1,5 @@
-experiment_name: bn_fission_ndnf_k10_l64_b32_e500
-seed: 1515
+experiment_name: bn_ara_ndnf_k10_l64_b32_e500
+seed: 8866
 
 use_cuda: True
 use_mps: False
@@ -10,5 +10,6 @@ model_architecture:
 
 k_folds: 10
 
+use_full_dataset: True
 discretisation_method: threshold # 'threshold' or 'disentangle'
 storage_dir: ??? # overwrite this

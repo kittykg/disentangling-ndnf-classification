@@ -99,6 +99,7 @@ def single_asp_program_stats(
 def post_train_asp_stats(cfg: DictConfig):
     eval_cfg = cfg["eval"]
     full_experiment_name = f"{eval_cfg['experiment_name']}_{eval_cfg['seed']}"
+    log.info(f"Full experiment name: {full_experiment_name}")
     run_dir_name = "-".join(
         [
             (s.upper() if i in [0] else s)

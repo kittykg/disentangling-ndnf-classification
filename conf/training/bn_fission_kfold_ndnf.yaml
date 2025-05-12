@@ -12,13 +12,13 @@ model_architecture:
 
 k_folds: 10
 
-optimiser: sgd
+optimiser: adam
 optimiser_lr: 0.003
-optimiser_weight_decay: 0
+optimiser_weight_decay: 0.0001
 scheduler_step: 50
 loss_func: bce
 batch_size: 32
-loader_num_workers: 4
+loader_num_workers: 0
 epochs: 500
 
 dds:
@@ -33,10 +33,10 @@ log_lr_in_wandb: True
 scheduler:
   type: cos
   warmup_steps: 100
-  decay_rate: 0.95
-  decay_steps: 10
+  decay_rate: 0.97
+  decay_steps: 100
   min_lr: 1e-6
 
 aux_loss:
-  weight_l1_mod_lambda: 7e-6
-  tanh_conj_lambda: 1e-5
+  weight_l1_mod_lambda: 1e-6
+  tanh_conj_lambda: 1e-1
