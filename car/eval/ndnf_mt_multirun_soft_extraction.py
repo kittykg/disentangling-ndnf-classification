@@ -1,8 +1,9 @@
 """
-This script thresholds prunedCarNDNFMT model. The input models are strictly
-after pruning stage in the post-training processing pipeline. The thresholed
-NDNF models are stored and evaluated. The evaluation metrics include accuracy,
-sample Jaccard and macro Jaccard.
+This script soft-extracts a pruned CarNDNFMT model. The input models are
+strictly after pruning stage in the post-training processing pipeline. The
+conjunctive layer will be discretised while the disjunctive layer will be left
+untouched. The final models are stored and evaluated. The evaluation metrics
+include accuracy, sample Jaccard and macro Jaccard.
 """
 
 from datetime import datetime

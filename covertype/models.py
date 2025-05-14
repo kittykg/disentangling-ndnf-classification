@@ -65,7 +65,6 @@ class CoverTypeMLP(CoverTypeClassifier):
 
 
 class CoverTypeBaseNeuralDNF(CoverTypeClassifier):
-    invented_predicate_per_input: int
     num_conjunctions: int
     c2b: bool
     manually_sparse_conj_layer_k: int | None = None
@@ -128,6 +127,7 @@ class CoverTypeBaseNeuralDNF(CoverTypeClassifier):
 
 
 class CovertTypeThresholdPIBaseNeuralDNF(CoverTypeBaseNeuralDNF):
+    invented_predicate_per_input: int
     predicate_inventor: NeuralDNFPredicateInventor
 
     def __init__(

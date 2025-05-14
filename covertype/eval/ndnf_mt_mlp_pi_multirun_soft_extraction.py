@@ -661,7 +661,7 @@ def single_model_soft_extract(
             predicate_inventor_dims=model.predicate_inventor_dims,
             sub_ndnf=NeuralDNF(
                 stats["sub_ndnf_in"],
-                stats["sub_ndnf_n_conunctions"],
+                stats["sub_ndnf_n_conjunctions"],
                 stats["sub_ndnf_out"],
                 1.0,
             ),
@@ -711,7 +711,7 @@ def single_model_soft_extract(
             "pruned_chained_ndnf_log_val": ret["pruned_chained_ndnf_log"],
             "pruned_chained_ndnf_log": pruned_chained_ndnf_log,
             "sub_ndnf_in": chained_model.sub_ndnf.conjunctions.in_features,
-            "sub_ndnf_n_conunctions": (
+            "sub_ndnf_n_conjunctions": (
                 chained_model.sub_ndnf.conjunctions.out_features
             ),
             "sub_ndnf_out": (chained_model.sub_ndnf.disjunctions.out_features),
