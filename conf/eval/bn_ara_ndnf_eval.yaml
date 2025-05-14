@@ -1,5 +1,5 @@
 experiment_name: bn_ara_ndnf_k10_l64_b32_e500
-seed: 8866
+seed: 73
 
 use_cuda: True
 use_mps: False
