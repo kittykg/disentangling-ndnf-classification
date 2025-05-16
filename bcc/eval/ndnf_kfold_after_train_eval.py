@@ -148,11 +148,11 @@ def post_train_prune(cfg: DictConfig) -> None:
         with open(
             model_dir / f"fold_{fold_id}_after_train_nipd_eval_result.json", "w"
         ) as f:
-            json.dump(no_ipd_ret_dicts, f, indent=4)
+            json.dump(no_ipd_eval_log, f, indent=4)
         with open(
             model_dir / f"fold_{fold_id}_after_train_ipd_eval_result.json", "w"
         ) as f:
-            json.dump(ipd_ret_dicts, f, indent=4)
+            json.dump(ipd_eval_log, f, indent=4)
 
         log.info("============================================================")
 
@@ -172,6 +172,9 @@ def post_train_prune(cfg: DictConfig) -> None:
     log.info("Synthesized results:")
     for k, v in return_dict.items():
         log.info(f"{k}: {v:.3f}")
+
+    with open("synthesized_after_train_eval_result.json", "w") as f:
+        json.dump(return_dict, f, indent=4)
 
 
 @hydra.main(version_base=None, config_path="../../conf", config_name="config")

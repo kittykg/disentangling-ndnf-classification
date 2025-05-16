@@ -515,8 +515,14 @@ def single_model_soft_extract(
             )
             model.load_state_dict(threshold_state)
             threshold_eval_log = _eval_with_log_wrapper(
-                "Thresholded NDNF model"
+                "Thresholded NDNF model", test_loader
             )
+            # override the threshold_eval_log in threshold_result_json
+            with open(threshold_result_json, "r") as f:
+                threshold_result = json.load(f)
+            threshold_result["threshold_eval_log"] = threshold_eval_log
+            with open(threshold_result_json, "w") as f:
+                json.dump(threshold_result, f, indent=4)
         else:
             threshold_ret_dict = process_conjunctive_layer_threshold(
                 do_logging=True
@@ -565,6 +571,13 @@ def single_model_soft_extract(
             car_classifier_eval(chained_model, device, test_loader),
             "Pruned chained NDNF model(test)",
         )
+
+        # override the pruned_chained_ndnf_log in disentangled_result_json
+        with open(disentangled_result_json, "r") as f:
+            disentangled_result = json.load(f)
+        disentangled_result["pruned_chained_ndnf_log"] = pruned_chained_ndnf_log
+        with open(disentangled_result_json, "w") as f:
+            json.dump(disentangled_result, f, indent=4)
     else:
         ret = process_conjunctive_layer_disentangle()
         chained_model = ret["chained_model"]
