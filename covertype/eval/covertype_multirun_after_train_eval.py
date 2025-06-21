@@ -48,6 +48,7 @@ from covertype.eval.eval_common import (
 from covertype.models import (
     CoverTypeThresholdPINeuralDNFEO,
     CoverTypeThresholdPINeuralDNFMT,
+    CoverTypeMLPPINeuralDNFEO,
     CoverTypeMLPPINeuralDNFMT,
     CoverTypeBaseNeuralDNF,
     construct_model,
@@ -116,6 +117,7 @@ def multirun_after_train_eval(cfg: DictConfig) -> None:
             (
                 CoverTypeThresholdPINeuralDNFEO,
                 CoverTypeThresholdPINeuralDNFMT,
+                CoverTypeMLPPINeuralDNFEO,
                 CoverTypeMLPPINeuralDNFMT,
             ),
         ):

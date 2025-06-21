@@ -393,6 +393,41 @@ class CoverTypeMLPPINeuralDNF(CoverTypeMLPPIBaseNeuralDNF):
         self.ndnf = new_ndnf
 
 
+class CoverTypeMLPPINeuralDNFEO(CoverTypeMLPPIBaseNeuralDNF):
+    ndnf: NeuralDNFEO
+
+    def _create_ndnf_model(self) -> NeuralDNFEO:
+        return NeuralDNFEO(
+            n_in=self.ndnf_num_input_features,
+            n_conjunctions=self.num_conjunctions,
+            n_out=COVERTYPE_NUM_CLASSES,
+            delta=1.0,
+        )
+
+    def get_pre_eo_output(
+        self, x: Tensor, discretise_invented_predicate: bool = False
+    ) -> Tensor:
+        # x: B x 44 or B x 16
+        x = self.get_invented_predicates(x, discretise_invented_predicate)
+        # x: B x (9 * IP + 35) or B x (9 * IP + 7)
+        return self.ndnf.get_plain_output(x)
+
+    def to_ndnf_model(self) -> CoverTypeMLPPINeuralDNF:
+        ndnf_model = CoverTypeMLPPINeuralDNF(
+            predicate_inventor_dims=self.predicate_inventor_dims,
+            num_conjunctions=self.num_conjunctions,
+            c2b=self.c2b,
+            manually_sparse_conj_layer_k=self.manually_sparse_conj_layer_k,
+        )
+        ndnf_model.ndnf = self.ndnf.to_ndnf()
+        # copy the sequential model
+        ndnf_model.predicate_inventor.load_state_dict(
+            self.predicate_inventor.state_dict()
+        )
+
+        return ndnf_model
+
+
 class CoverTypeMLPPINeuralDNFMT(CoverTypeMLPPIBaseNeuralDNF):
     ndnf: NeuralDNFMutexTanh
 
@@ -446,7 +481,12 @@ def construct_model(cfg: DictConfig) -> CoverTypeClassifier:
             cfg["model_architecture"].get("predicate_inventor_mlp_dims", None)
             is not None
         ):
-            return CoverTypeMLPPINeuralDNFMT(
+            ndnf_class = (
+                CoverTypeMLPPINeuralDNFEO
+                if cfg["model_type"] == "eo"
+                else CoverTypeMLPPINeuralDNFMT
+            )
+            return ndnf_class(
                 predicate_inventor_dims=cfg["model_architecture"][
                     "predicate_inventor_mlp_dims"
                 ],

@@ -51,6 +51,7 @@ from covertype.data_utils_covertype import (
     get_x_and_y_covertype,
 )
 from covertype.models import (
+    CoverTypeMLPPINeuralDNFEO,
     CoverTypeMLPPINeuralDNFMT,
     construct_model,
 )
@@ -63,10 +64,10 @@ def loss_calculation(
     criterion: torch.nn.Module,
     y_hat: Tensor,
     y: Tensor,
-    model: CoverTypeMLPPINeuralDNFMT,
+    model: CoverTypeMLPPINeuralDNFEO | CoverTypeMLPPINeuralDNFMT,
     conj_out: Tensor,
     invented_predicates: Tensor,
-    all_forms_dict: dict[str, dict[str, Tensor]],
+    all_forms_dict: dict[str, dict[str, Tensor]] | None = None,
 ) -> dict[str, Tensor]:
     loss_dict = {
         "base_loss": criterion(y_hat, y),
@@ -75,24 +76,25 @@ def loss_calculation(
         "invented_predicates_reg_loss": (1 - invented_predicates.abs()).mean(),
     }
 
-    # MT regularisation loss: push the mutex-tanh activation and the tanh
-    # activation to be the same
-    disj_mt = all_forms_dict["disjunction"]["mutex_tanh"]
-    disj_tanh = all_forms_dict["disjunction"]["tanh"]
+    if all_forms_dict is not None:
+        # MT regularisation loss: push the mutex-tanh activation and the tanh
+        # activation to be the same
+        disj_mt = all_forms_dict["disjunction"]["mutex_tanh"]
+        disj_tanh = all_forms_dict["disjunction"]["tanh"]
 
-    p_k = (disj_mt + 1) / 2
-    p_k_hat = (disj_tanh + 1) / 2
-    loss_dict["mt_reg_loss"] = -torch.sum(
-        p_k * torch.log(p_k_hat + 1e-8)
-        + (1 - p_k) * torch.log(1 - p_k_hat + 1e-8)
-    )
+        p_k = (disj_mt + 1) / 2
+        p_k_hat = (disj_tanh + 1) / 2
+        loss_dict["mt_reg_loss"] = -torch.sum(
+            p_k * torch.log(p_k_hat + 1e-8)
+            + (1 - p_k) * torch.log(1 - p_k_hat + 1e-8)
+        )
 
     return loss_dict
 
 
 def _train(
     training_cfg: DictConfig,
-    model: CoverTypeMLPPINeuralDNFMT,
+    model: CoverTypeMLPPINeuralDNFEO | CoverTypeMLPPINeuralDNFMT,
     train_loader: DataLoader,
     val_loader: DataLoader,
     device: torch.device,
@@ -154,8 +156,9 @@ def _train(
         "invented_predicates_reg_loss": MetricValueMeter(
             "invented_predicates_reg_loss_meter"
         ),
-        "mt_reg_loss": MetricValueMeter("mt_reg_loss_meter"),
     }
+    if isinstance(model, CoverTypeMLPPINeuralDNFMT):
+        train_loss_meters["mt_reg_loss"] = MetricValueMeter("mt_reg_loss_meter")
 
     train_acc_meter = AccuracyMeter()
     train_jacc_meter = JaccardScoreMeter()
@@ -180,7 +183,9 @@ def _train(
             y_hat = model(x)
             conj_out = model.get_conjunction(x)
             invented_predicates = model.get_invented_predicates(x)
-            all_forms_dict = model.get_all_forms(x)
+            all_forms_dict = None
+            if isinstance(model, CoverTypeMLPPINeuralDNFMT):
+                all_forms_dict = model.get_all_forms(x)
 
             loss_dict = loss_calculation(
                 criterion,
@@ -200,9 +205,12 @@ def _train(
                 * loss_dict["conj_reg_loss"]
                 + training_cfg["aux_loss"]["pi_lambda"]
                 * loss_dict["invented_predicates_reg_loss"]
-                + training_cfg["aux_loss"]["mt_reg_lambda"]
-                * loss_dict["mt_reg_loss"]
             )
+            if isinstance(model, CoverTypeMLPPINeuralDNFMT):
+                loss += (
+                    training_cfg["aux_loss"]["mt_reg_lambda"]
+                    * loss_dict["mt_reg_loss"]
+                )
 
             loss.backward()
 
@@ -228,8 +236,18 @@ def _train(
             train_acc_meter.update(y_hat, y)
 
             # Update jacc meter
-            with torch.no_grad():
-                y_hat_prime = (all_forms_dict["disjunction"]["tanh"] > 0).long()
+            if isinstance(model, CoverTypeMLPPINeuralDNFMT):
+                # NDNF-MT
+                assert all_forms_dict is not None
+                with torch.no_grad():
+                    y_hat_prime = (
+                        all_forms_dict["disjunction"]["tanh"] > 0
+                    ).long()
+            else:
+                # NDNF-EO
+                with torch.no_grad():
+                    y_hat_prime = model.get_pre_eo_output(x)
+                    y_hat_prime = (torch.tanh(y_hat_prime) > 0).long()
             train_jacc_meter.update(y_hat_prime, y)
 
         # Log average performance for train
@@ -267,7 +285,9 @@ def _train(
                 y_hat = model(x)
                 conj_out = model.get_conjunction(x)
                 invented_predicates = model.get_invented_predicates(x)
-                all_forms_dict = model.get_all_forms(x)
+                all_forms_dict = None
+                if isinstance(model, CoverTypeMLPPINeuralDNFMT):
+                    all_forms_dict = model.get_all_forms(x)
 
                 loss_dict = loss_calculation(
                     criterion,
@@ -287,14 +307,28 @@ def _train(
                     * loss_dict["conj_reg_loss"]
                     + training_cfg["aux_loss"]["pi_lambda"]
                     * loss_dict["invented_predicates_reg_loss"]
-                    + training_cfg["aux_loss"]["mt_reg_lambda"]
-                    * loss_dict["mt_reg_loss"]
                 )
+                if isinstance(model, CoverTypeMLPPINeuralDNFMT):
+                    loss += (
+                        training_cfg["aux_loss"]["mt_reg_lambda"]
+                        * loss_dict["mt_reg_loss"]
+                    )
 
                 # Update meters
                 epoch_val_loss_meter.update(loss.item())
                 epoch_val_acc_meter.update(y_hat, y)
-                y_hat_prime = (all_forms_dict["disjunction"]["tanh"] > 0).long()
+                if isinstance(model, CoverTypeMLPPINeuralDNFMT):
+                    # NDNF-MT
+                    assert all_forms_dict is not None
+                    with torch.no_grad():
+                        y_hat_prime = (
+                            all_forms_dict["disjunction"]["tanh"] > 0
+                        ).long()
+                else:
+                    # NDNF-EO
+                    with torch.no_grad():
+                        y_hat_prime = model.get_pre_eo_output(x)
+                        y_hat_prime = (torch.tanh(y_hat_prime) > 0).long()
                 epoch_val_jacc_meter.update(y_hat_prime, y)
 
         val_avg_loss = epoch_val_loss_meter.get_average()
@@ -438,7 +472,9 @@ def train(
 
     # Model
     model = construct_model(training_cfg)
-    assert isinstance(model, CoverTypeMLPPINeuralDNFMT)
+    assert isinstance(
+        model, (CoverTypeMLPPINeuralDNFMT, CoverTypeMLPPINeuralDNFEO)
+    )
     model.to(device)
     log.info(f"Model: {model}")
 

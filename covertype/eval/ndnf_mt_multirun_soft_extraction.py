@@ -243,6 +243,7 @@ def threshold_conjunctive_layer(
                 log_info_str += (
                     f"  Overall Error Rate: {d['overall_error_rate']:.3f}"
                 )
+            log.info(log_info_str)
 
     # Apply the best threshold
     best_t_val = sorted_result_dicts[0]["t_val"]

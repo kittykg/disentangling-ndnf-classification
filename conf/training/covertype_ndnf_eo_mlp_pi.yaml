@@ -1,0 +1,41 @@
+experiment_name: covertype_c2b_us_ndnf_eo_mlp_pi_nc64_msc40_b128_dds_mon_linear_e200
+seed: null
+
+use_cuda: True
+use_mps: False
+
+log_interval: 20
+
+val_size: 0.3
+val_seed: 73
+
+use_weighted_sampler: False
+
+model_type: eo
+model_architecture:
+  n_conjunctions: 64
+  manually_sparse_conj_layer_k: 40
+  predicate_inventor_mlp_dims: [128, 64]  # MLP dimensions for predicate invention
+
+convert_categorical_to_binary_encoding: True
+
+optimiser: adam
+optimiser_lr: 0.001
+optimiser_weight_decay: 0.0001
+scheduler_step: 50
+batch_size: 128
+loader_num_workers: 4
+epochs: 200
+
+dds:
+  type: monitoring_linear
+  initial_delta: 0.1
+  delta_decay_delay: 5
+  delta_decay_steps: 2 # this will be ignored for monitoring based dds
+  delta_decay_rate: 0.05
+  performance_offset: 1e-2  # used for monitoring based dds
+
+aux_loss:
+  weight_l1_mod_lambda: 1e-5
+  tanh_conj_lambda: 1e-5
+  pi_lambda: 1e-5

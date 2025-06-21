@@ -1,8 +1,9 @@
 """
-This script disentangles pruned plain NDNF from the CarNDNF-EO or -MT model. The
-input models are strictly after pruning stage in the post-training processing
-pipeline. The disentangled NDNF models are stored and evaluated. The evaluation
-metrics include accuracy, sample Jaccard and macro Jaccard.
+This script disentangles pruned plain NDNF from the CoverType MLP PI NDNF-EO
+model. The input models are strictly after pruning stage in the post-training
+processing pipeline. The disentangled NDNF models are stored and evaluated. The
+evaluation metrics include accuracy, sample Jaccard, macro Jaccard and error
+metrics.
 """
 
 import json
@@ -20,7 +21,7 @@ from sklearn.model_selection import train_test_split
 import torch
 from torch.utils.data import DataLoader
 
-from neural_dnf import NeuralDNF
+from neural_dnf.neural_dnf import NeuralDNF
 from neural_dnf.post_training import (
     split_entangled_conjunction,
     condense_neural_dnf_model,
@@ -38,29 +39,34 @@ except ValueError:  # Already removed
 from analysis import synthesize, AccuracyMeter, JaccardScoreMeter, ErrorMeter
 from utils import post_to_discord_webhook
 
-from car.data_utils_car import get_car_data_np_from_path, CarDataset
-from car.eval.eval_common import (
+from covertype.data_utils_covertype import (
+    get_covertype_data_np_from_path,
+    CoverTypeDataset,
+)
+from covertype.eval.eval_common import (
     EVAL_RELEVANT_KEYS,
     EVAL_ERROR_DICT_RELEVANT_KEYS,
-    car_classifier_eval,
+    covertype_classifier_eval,
     parse_eval_return_meters_with_logging,
     DEFAULT_GEN_SEED,
-    DEFAULT_LOADER_BATCH_SIZE,
     DEFAULT_LOADER_NUM_WORKERS,
     FIRST_PRUNE_MODEL_BASE_NAME,
     INTERMEDIATE_DISENTANGLED_MODEL_BASE_NAME,
     DISENTANGLED_MODEL_BASE_NAME,
     DISENTANGLED_RESULT_JSON_BASE_NAME,
 )
-from car.eval.ndnf_multirun_prune import multiround_prune
-from car.models import (
-    CarNeuralDNFEO,
-    CarNeuralDNFMT,
-    CarNeuralDNF,
+from covertype.eval.ndnf_multirun_prune import multiround_prune, comparison_fn
+from covertype.models import (
+    CoverTypeMLPPINeuralDNFEO,
+    CoverTypeMLPPINeuralDNF,
     construct_model,
 )
 
 log = logging.getLogger()
+
+
+DEFAULT_LOADER_BATCH_SIZE = 2**11
+DEFAULT_COMPUTE_ERROR_DICT = False
 
 
 def create_intermediate_ndnf(model: NeuralDNF) -> NeuralDNF:
@@ -130,7 +136,7 @@ def create_intermediate_ndnf(model: NeuralDNF) -> NeuralDNF:
 
 
 def threshold_intermediate_model_disjunctive_layer(
-    intermediate_model: CarNeuralDNF,
+    intermediate_model: CoverTypeMLPPINeuralDNF,
     device: torch.device,
     train_loader: DataLoader,
     do_logging: bool = False,
@@ -162,7 +168,7 @@ def threshold_intermediate_model_disjunctive_layer(
             * torch.sign(intermediate_disj_weight)
             * 6
         )
-        threshold_eval_dict = car_classifier_eval(
+        threshold_eval_dict = covertype_classifier_eval(
             intermediate_model, device, train_loader
         )
         acc_meter = threshold_eval_dict["acc_meter"]
@@ -172,43 +178,63 @@ def threshold_intermediate_model_disjunctive_layer(
         assert isinstance(jacc_meter, JaccardScoreMeter)
         assert isinstance(error_meter, ErrorMeter)
         accuracy = acc_meter.get_average()
+        f1 = acc_meter.get_other_classification_metrics("weighted")["f1"]
+        assert isinstance(f1, float)
         sample_jacc = jacc_meter.get_average("samples")
         macro_jacc = jacc_meter.get_average("macro")
         assert isinstance(sample_jacc, float)
         assert isinstance(macro_jacc, float)
-        overall_error_rate = error_meter.get_average()["overall_error_rate"]
+        if DEFAULT_COMPUTE_ERROR_DICT:
+            error_meter = threshold_eval_dict["error_meter"]
+            assert isinstance(error_meter, ErrorMeter)
+            overall_error_rate = error_meter.get_average()["overall_error_rate"]
 
         result_dicts_with_t_val.append(
             {
                 "t_val": v.item(),
                 "accuracy": accuracy,
+                "f1": f1,
                 "sample_jacc": sample_jacc,
                 "macro_jacc": macro_jacc,
-                "overall_error_rate": overall_error_rate,
             }
         )
+        if DEFAULT_COMPUTE_ERROR_DICT:
+            assert isinstance(overall_error_rate, float)
+            result_dicts_with_t_val[-1][
+                "overall_error_rate"
+            ] = overall_error_rate
 
-    sorted_result_dicts: list[dict[str, float]] = sorted(
-        result_dicts_with_t_val,
-        key=lambda x: (
+    if DEFAULT_COMPUTE_ERROR_DICT:
+        sort_fn = lambda x: (
+            x["f1"],
             -x["overall_error_rate"],
             x["sample_jacc"],
             x["accuracy"],
-        ),
+        )
+    else:
+        sort_fn = lambda x: (x["f1"], x["accuracy"], x["sample_jacc"])
+    sorted_result_dicts: list[dict[str, float]] = sorted(
+        result_dicts_with_t_val,
+        key=sort_fn,
         reverse=True,
     )
 
     if do_logging:
         log.info("Top 5 thresholding candidates:")
         for i, d in enumerate(sorted_result_dicts[:5]):
-            log.info(
+            log_info_str = (
                 f"-- Candidate {i + 1} --\n"
                 f"\tt_val: {d['t_val']:.2f}  "
                 f"Acc: {d['accuracy']:.3f}  "
+                f"F1: {d['f1']:.3f}  "
                 f"Sample Jacc: {d['sample_jacc']:.3f}  "
                 f"Macro Jacc: {d['macro_jacc']:.3f}  "
-                f"Overall Error Rate: {d['overall_error_rate']:.3f}"
             )
+            if DEFAULT_COMPUTE_ERROR_DICT:
+                log_info_str += (
+                    f"  Overall Error Rate: {d['overall_error_rate']:.3f}"
+                )
+            log.info(log_info_str)
 
     # Apply the best threshold
     best_t_val = sorted_result_dicts[0]["t_val"]
@@ -223,7 +249,7 @@ def threshold_intermediate_model_disjunctive_layer(
 
 
 def single_model_disentangle(
-    model: CarNeuralDNF,
+    model: CoverTypeMLPPINeuralDNF,
     device: torch.device,
     train_loader: DataLoader,
     val_loader: DataLoader,
@@ -233,15 +259,17 @@ def single_model_disentangle(
     def _eval_with_log_wrapper(
         model_name: str, data_loader: DataLoader = val_loader
     ) -> dict[str, float]:
-        eval_meters = car_classifier_eval(model, device, data_loader)
+        eval_meters = covertype_classifier_eval(model, device, data_loader)
         return parse_eval_return_meters_with_logging(eval_meters, model_name)
 
     # Stage 1: Evaluate the pruned model
-    _eval_with_log_wrapper("Pruned Car NDNF (test)", test_loader)
+    prune_log = _eval_with_log_wrapper(
+        "Pruned CoverType NDNF (test)", test_loader
+    )
     log.info("------------------------------------------")
 
-    # Stage 2: Disentangle the pruned model
-    def disentangle(model: CarNeuralDNF) -> dict[str, Any]:
+    # Stage 2: Disentangle the model
+    def disentangle(model: CoverTypeMLPPINeuralDNF) -> dict[str, Any]:
         log.info("Disentangling the model...")
 
         # Create an intermediate model
@@ -250,7 +278,7 @@ def single_model_disentangle(
         model.to(device)
         model.eval()
         intermediate_pre_threshold_log = _eval_with_log_wrapper(
-            "Intermediate disentangled Car NDNF model (val)"
+            "Intermediate disentangled Covertype NDNF model (val)"
         )
         log.info("------------------------------------------")
 
@@ -258,8 +286,8 @@ def single_model_disentangle(
         best_t_val = threshold_intermediate_model_disjunctive_layer(
             model, device, train_loader, do_logging=True
         )
-        intermediate_thresholed_log = _eval_with_log_wrapper(
-            f"Thresholded disentangled Car NDNF (t={best_t_val}) (val)",
+        intermediate_thresholded_log = _eval_with_log_wrapper(
+            f"Thresholded disentangled Covertype NDNF (t={best_t_val}) (val)",
         )
         log.info("------------------------------------------")
 
@@ -271,7 +299,7 @@ def single_model_disentangle(
             lambda x: _eval_with_log_wrapper(x["model_name"]),
         )
         intermediate_pruned_log = _eval_with_log_wrapper(
-            "Pruned disentangled Car NDNF (test)", test_loader
+            "Pruned disentangled Covertype NDNF (test)", test_loader
         )
         log.info("------------------------------------------")
 
@@ -282,12 +310,13 @@ def single_model_disentangle(
         model.to(device)
         model.eval()
         condensed_model_log = _eval_with_log_wrapper(
-            "Condensed disentangled Car NDNF (test)", test_loader
+            "Disentangled Covertype NDNF model (condensed, test)",
+            test_loader,
         )
 
         return {
             "intermediate_pre_threshold_log": intermediate_pre_threshold_log,
-            "intermediate_thresholed_log": intermediate_thresholed_log,
+            "intermediate_thresholded_log": intermediate_thresholded_log,
             "intermediate_pruned_log": intermediate_pruned_log,
             "intermediate_ndnf": intermediate_ndnf,
             "condensed_ndnf": condensed_ndnf,
@@ -319,13 +348,14 @@ def single_model_disentangle(
         model.load_state_dict(disentangled_state)
         model.eval()
         condensed_model_log = _eval_with_log_wrapper(
-            "Condensed disentangled Car NDNF (test)", test_loader
+            "Disentangled Covertype NDNF model (condensed, test)",
+            test_loader,
         )
     else:
         ret = disentangle(model)
         intermediate_ndnf: NeuralDNF = ret["intermediate_ndnf"]
         disentangled_ndnf: NeuralDNF = ret["condensed_ndnf"]
-        disentangled_model: CarNeuralDNF = ret["condensed_model"]
+        disentangled_model: CoverTypeMLPPINeuralDNF = ret["condensed_model"]
         condensed_model_log = ret["condensed_model_log"]
 
         torch.save(disentangled_model.state_dict(), model_path)
@@ -343,7 +373,7 @@ def single_model_disentangle(
             "intermediate_pre_threshold_log": ret[
                 "intermediate_pre_threshold_log"
             ],
-            "intermediate_thresholed_log": ret["intermediate_thresholed_log"],
+            "intermediate_thresholded_log": ret["intermediate_thresholded_log"],
             "intermediate_pruned_log": ret["intermediate_pruned_log"],
             "condensed_model_log": condensed_model_log,
         }
@@ -374,10 +404,10 @@ def multirun_disentangle(cfg: DictConfig) -> None:
     log.info(f"Device: {device}")
 
     # Load test data
-    hold_out_test_X, hold_out_test_y = get_car_data_np_from_path(
+    hold_out_test_X, hold_out_test_y = get_covertype_data_np_from_path(
         cfg["dataset"], is_test=True
     )
-    test_dataset = CarDataset(hold_out_test_X, hold_out_test_y)
+    test_dataset = CoverTypeDataset(hold_out_test_X, hold_out_test_y)
     test_loader = DataLoader(
         test_dataset,
         batch_size=DEFAULT_LOADER_BATCH_SIZE,
@@ -402,29 +432,38 @@ def multirun_disentangle(cfg: DictConfig) -> None:
             / caps_experiment_name
             / f"{caps_experiment_name}-{s}"
         )
-        model = construct_model(eval_cfg, num_features=hold_out_test_X.shape[1])
-        assert isinstance(model, (CarNeuralDNFEO, CarNeuralDNFMT))
+        model = construct_model(eval_cfg)
+        assert isinstance(model, CoverTypeMLPPINeuralDNFEO)
 
         model = model.to_ndnf_model()
         model.to(device)
+        model.eval()
         model_state = torch.load(
             model_dir / f"{FIRST_PRUNE_MODEL_BASE_NAME}.pth",
             map_location=device,
             weights_only=True,
         )
         model.load_state_dict(model_state)
-        model.eval()
 
         # Data loaders
-        X, y = get_car_data_np_from_path(cfg["dataset"], is_test=False)
-        X_train, X_val, y_train, y_val = train_test_split(
+        X, y = get_covertype_data_np_from_path(cfg["dataset"], is_test=False)
+        X_train_og, X_val, y_train_og, y_val = train_test_split(
             X,
             y,
             test_size=eval_cfg.get("val_size", 0.2),
             random_state=eval_cfg.get("val_seed", 73),
         )
-        train_dataset = CarDataset(X_train, y_train)
-        val_dataset = CarDataset(X_val, y_val)
+        # Since covertype has a lot of instances of data entries, we further
+        # split the train dataset to use a smaller subset to speed up the
+        # pruning process
+        _, X_train, _, y_train = train_test_split(
+            X_train_og,
+            y_train_og,
+            test_size=0.4,
+            random_state=eval_cfg.get("val_seed", 73),
+        )
+        train_dataset = CoverTypeDataset(X_train, y_train)
+        val_dataset = CoverTypeDataset(X_val, y_val)
         train_loader = DataLoader(
             train_dataset,
             batch_size=DEFAULT_LOADER_BATCH_SIZE,
@@ -463,7 +502,7 @@ def multirun_disentangle(cfg: DictConfig) -> None:
     for k, v in return_dict.items():
         log.info(f"{k}: {v:.3f}")
 
-    with open("disentangle_v2_results.json", "w") as f:
+    with open("disentangle_result_v2.json", "w") as f:
         json.dump(return_dict, f, indent=4)
 
 

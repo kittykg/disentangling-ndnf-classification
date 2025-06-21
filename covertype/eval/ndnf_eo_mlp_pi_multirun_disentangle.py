@@ -1,8 +1,9 @@
 """
-This script disentangles pruned plain NDNF from the CarNDNF-EO or -MT model. The
-input models are strictly after pruning stage in the post-training processing
-pipeline. The disentangled NDNF models are stored and evaluated. The evaluation
-metrics include accuracy, sample Jaccard and macro Jaccard.
+This script disentangles pruned plain NDNF from the CoverType MLP PI NDNF-EO
+model. The input models are strictly after pruning stage in the post-training
+processing pipeline. The disentangled NDNF models are stored and evaluated. The
+evaluation metrics include accuracy, sample Jaccard, macro Jaccard and error
+metrics.
 """
 
 import json
@@ -20,7 +21,7 @@ from sklearn.model_selection import train_test_split
 import torch
 from torch.utils.data import DataLoader
 
-from neural_dnf import NeuralDNF
+from neural_dnf.neural_dnf import NeuralDNF
 from neural_dnf.post_training import (
     split_entangled_conjunction,
     condense_neural_dnf_model,
@@ -38,192 +39,38 @@ except ValueError:  # Already removed
 from analysis import synthesize, AccuracyMeter, JaccardScoreMeter, ErrorMeter
 from utils import post_to_discord_webhook
 
-from car.data_utils_car import get_car_data_np_from_path, CarDataset
-from car.eval.eval_common import (
+from covertype.data_utils_covertype import (
+    get_covertype_data_np_from_path,
+    CoverTypeDataset,
+)
+from covertype.eval.eval_common import (
     EVAL_RELEVANT_KEYS,
     EVAL_ERROR_DICT_RELEVANT_KEYS,
-    car_classifier_eval,
+    covertype_classifier_eval,
     parse_eval_return_meters_with_logging,
     DEFAULT_GEN_SEED,
-    DEFAULT_LOADER_BATCH_SIZE,
     DEFAULT_LOADER_NUM_WORKERS,
     FIRST_PRUNE_MODEL_BASE_NAME,
     INTERMEDIATE_DISENTANGLED_MODEL_BASE_NAME,
     DISENTANGLED_MODEL_BASE_NAME,
     DISENTANGLED_RESULT_JSON_BASE_NAME,
 )
-from car.eval.ndnf_multirun_prune import multiround_prune
-from car.models import (
-    CarNeuralDNFEO,
-    CarNeuralDNFMT,
-    CarNeuralDNF,
+from covertype.eval.ndnf_multirun_prune import multiround_prune, comparison_fn
+from covertype.models import (
+    CoverTypeMLPPINeuralDNFEO,
+    CoverTypeMLPPINeuralDNF,
     construct_model,
 )
 
 log = logging.getLogger()
 
 
-def create_intermediate_ndnf(model: NeuralDNF) -> NeuralDNF:
-    # Remember the disjunction-conjunction mapping
-    conj_w = model.conjunctions.weights.data.clone().detach().cpu()
-    disj_w = model.disjunctions.weights.data.clone().detach().cpu()
-
-    og_disj_conj_mapping = dict()
-    for disj_id, w in enumerate(disj_w):
-        non_zeros = torch.where(w != 0)[0]
-        og_disj_conj_mapping[disj_id] = non_zeros.tolist()
-
-    new_disj_conj_mapping = dict()
-    new_conj_list = []
-
-    for disj_id, conjs in og_disj_conj_mapping.items():
-        acc_pairs = []
-
-        for conj_id in conjs:
-            og_sign = int(torch.sign(disj_w[disj_id][conj_id]).item())
-            ret = split_entangled_conjunction(conj_w[conj_id], sign=og_sign)
-
-            if ret is None:
-                continue
-
-            for c in ret:
-                non_zero_count = torch.sum(c != 0).item()
-                # Since the new conjunction is returned ready to be used in
-                # positive form, always add the sign as 1. We add the tuple
-                # of (non_zero_count, sign, og_weight, conjunction)
-                acc_pairs.append(
-                    (non_zero_count, 1, disj_w[disj_id][conj_id], c)
-                )
-
-        # Arrange the combinations from most general (more 0-weights) to most
-        # specific (less 0-weights)
-        acc_pairs.sort(key=lambda x: x[0])
-        new_disj_conj_mapping[disj_id] = [
-            {
-                "sign": x[1],
-                "conj_id": i + len(new_conj_list),
-                "og_weight": x[2],
-            }
-            for i, x in enumerate(acc_pairs)
-        ]
-        new_conj_list.extend([x[3] for x in acc_pairs])
-
-    new_conj_w = torch.stack(new_conj_list)
-
-    # We need to update the disjunction weights
-    new_disj_w = torch.zeros((disj_w.shape[0], len(new_conj_list)))
-    for disj_id, vs in new_disj_conj_mapping.items():
-        for v in vs:
-            sign = v["sign"]
-            conj_id = v["conj_id"]
-            og_weight = v["og_weight"]
-            new_disj_w[disj_id][conj_id] = sign * torch.abs(og_weight)
-
-    # Create an intermediate model
-    intermediate_model = NeuralDNF(
-        conj_w.shape[1], len(new_conj_list), disj_w.shape[0], 1.0
-    )
-    intermediate_model.conjunctions.weights.data = new_conj_w.clone()
-    intermediate_model.disjunctions.weights.data = new_disj_w.clone()
-
-    return intermediate_model
-
-
-def threshold_intermediate_model_disjunctive_layer(
-    intermediate_model: CarNeuralDNF,
-    device: torch.device,
-    train_loader: DataLoader,
-    do_logging: bool = False,
-) -> float:
-    intermediate_disj_weight = (
-        intermediate_model.ndnf.disjunctions.weights.data.clone()
-    )
-    threshold_upper_bound = round(
-        (
-            torch.Tensor(
-                [
-                    intermediate_disj_weight.min(),
-                    intermediate_disj_weight.max(),
-                ]
-            )
-            .abs()
-            .max()
-            + 0.01
-        ).item(),
-        2,
-    )
-    log.info(f"Threshold upper bound: {threshold_upper_bound}")
-
-    t_vals = torch.arange(0, threshold_upper_bound, 0.01)
-    result_dicts_with_t_val = []
-    for v in t_vals:
-        intermediate_model.ndnf.disjunctions.weights.data = (
-            (torch.abs(intermediate_disj_weight) > v)
-            * torch.sign(intermediate_disj_weight)
-            * 6
-        )
-        threshold_eval_dict = car_classifier_eval(
-            intermediate_model, device, train_loader
-        )
-        acc_meter = threshold_eval_dict["acc_meter"]
-        jacc_meter = threshold_eval_dict["jacc_meter"]
-        error_meter = threshold_eval_dict["error_meter"]
-        assert isinstance(acc_meter, AccuracyMeter)
-        assert isinstance(jacc_meter, JaccardScoreMeter)
-        assert isinstance(error_meter, ErrorMeter)
-        accuracy = acc_meter.get_average()
-        sample_jacc = jacc_meter.get_average("samples")
-        macro_jacc = jacc_meter.get_average("macro")
-        assert isinstance(sample_jacc, float)
-        assert isinstance(macro_jacc, float)
-        overall_error_rate = error_meter.get_average()["overall_error_rate"]
-
-        result_dicts_with_t_val.append(
-            {
-                "t_val": v.item(),
-                "accuracy": accuracy,
-                "sample_jacc": sample_jacc,
-                "macro_jacc": macro_jacc,
-                "overall_error_rate": overall_error_rate,
-            }
-        )
-
-    sorted_result_dicts: list[dict[str, float]] = sorted(
-        result_dicts_with_t_val,
-        key=lambda x: (
-            -x["overall_error_rate"],
-            x["sample_jacc"],
-            x["accuracy"],
-        ),
-        reverse=True,
-    )
-
-    if do_logging:
-        log.info("Top 5 thresholding candidates:")
-        for i, d in enumerate(sorted_result_dicts[:5]):
-            log.info(
-                f"-- Candidate {i + 1} --\n"
-                f"\tt_val: {d['t_val']:.2f}  "
-                f"Acc: {d['accuracy']:.3f}  "
-                f"Sample Jacc: {d['sample_jacc']:.3f}  "
-                f"Macro Jacc: {d['macro_jacc']:.3f}  "
-                f"Overall Error Rate: {d['overall_error_rate']:.3f}"
-            )
-
-    # Apply the best threshold
-    best_t_val = sorted_result_dicts[0]["t_val"]
-    log.info(f"Applying t_val: {best_t_val:.2f}")
-    intermediate_model.ndnf.disjunctions.weights.data = (
-        (torch.abs(intermediate_disj_weight) > best_t_val)
-        * torch.sign(intermediate_disj_weight)
-        * 6
-    )
-
-    return best_t_val
+DEFAULT_LOADER_BATCH_SIZE = 2**11
+DEFAULT_COMPUTE_ERROR_DICT = False
 
 
 def single_model_disentangle(
-    model: CarNeuralDNF,
+    model: CoverTypeMLPPINeuralDNF,
     device: torch.device,
     train_loader: DataLoader,
     val_loader: DataLoader,
@@ -233,33 +80,78 @@ def single_model_disentangle(
     def _eval_with_log_wrapper(
         model_name: str, data_loader: DataLoader = val_loader
     ) -> dict[str, float]:
-        eval_meters = car_classifier_eval(model, device, data_loader)
+        eval_meters = covertype_classifier_eval(model, device, data_loader)
         return parse_eval_return_meters_with_logging(eval_meters, model_name)
 
     # Stage 1: Evaluate the pruned model
-    _eval_with_log_wrapper("Pruned Car NDNF (test)", test_loader)
+    prune_log = _eval_with_log_wrapper(
+        "Pruned CoverType NDNF (test)", test_loader
+    )
     log.info("------------------------------------------")
 
-    # Stage 2: Disentangle the pruned model
-    def disentangle(model: CarNeuralDNF) -> dict[str, Any]:
+    # Stage 2: Disentangle the model
+    def disentangle() -> dict[str, Any]:
         log.info("Disentangling the model...")
 
+        # Remember the disjunction-conjunction mapping
+        conj_w = model.ndnf.conjunctions.weights.data.clone().detach().cpu()
+        disj_w = model.ndnf.disjunctions.weights.data.clone().detach().cpu()
+
+        og_disj_conj_mapping = dict()
+        for disj_id, w in enumerate(disj_w):
+            non_zeros = torch.where(w != 0)[0]
+            og_disj_conj_mapping[disj_id] = non_zeros.tolist()
+
+        new_disj_conj_mapping = dict()
+        new_conj_list = []
+
+        for disj_id, conjs in og_disj_conj_mapping.items():
+            acc_pairs = []
+
+            for conj_id in conjs:
+                og_sign = int(torch.sign(disj_w[disj_id][conj_id]).item())
+                ret = split_entangled_conjunction(conj_w[conj_id], sign=og_sign)
+
+                if ret is None:
+                    continue
+
+                for c in ret:
+                    non_zero_count = torch.sum(c != 0).item()
+                    # Since the new conjunction is returned ready to be used in
+                    # positive form, always add the sign as 1
+                    acc_pairs.append((non_zero_count, 1, c))
+
+            # Arrange the combinations from negation to normal, and from most
+            # general (more 0-weights) to most specific (less 0-weights)
+            acc_pairs.sort(key=lambda x: (x[1], x[0]))
+            new_disj_conj_mapping[disj_id] = [
+                {"sign": x[1], "conj_id": i + len(new_conj_list)}
+                for i, x in enumerate(acc_pairs)
+            ]
+            new_conj_list.extend([x[2] for x in acc_pairs])
+
+        new_conj_w = torch.stack(new_conj_list)
+
+        # We need to update the disjunction weights
+        new_disj_w = torch.zeros((disj_w.shape[0], len(new_conj_list)))
+        for disj_id, vs in new_disj_conj_mapping.items():
+            for v in vs:
+                sign = v["sign"]
+                conj_id = v["conj_id"]
+                new_disj_w[disj_id][conj_id] = sign * 6
+
         # Create an intermediate model
-        intermediate_ndnf = create_intermediate_ndnf(model.ndnf)
+        intermediate_ndnf = NeuralDNF(
+            conj_w.shape[1], len(new_conj_list), disj_w.shape[0], 1.0
+        )
+        intermediate_ndnf.conjunctions.weights.data = new_conj_w.clone()
+        intermediate_ndnf.disjunctions.weights.data = new_disj_w.clone()
         model.change_ndnf(intermediate_ndnf)
         model.to(device)
         model.eval()
-        intermediate_pre_threshold_log = _eval_with_log_wrapper(
-            "Intermediate disentangled Car NDNF model (val)"
-        )
-        log.info("------------------------------------------")
 
-        # Threshold the intermediate model's disjunctive layer
-        best_t_val = threshold_intermediate_model_disjunctive_layer(
-            model, device, train_loader, do_logging=True
-        )
-        intermediate_thresholed_log = _eval_with_log_wrapper(
-            f"Thresholded disentangled Car NDNF (t={best_t_val}) (val)",
+        _eval_with_log_wrapper(
+            "Disentangled Covertype NDNF (intermediate, no prune, val)",
         )
         log.info("------------------------------------------")
 
@@ -270,8 +162,8 @@ def single_model_disentangle(
             train_loader,
             lambda x: _eval_with_log_wrapper(x["model_name"]),
         )
-        intermediate_pruned_log = _eval_with_log_wrapper(
-            "Pruned disentangled Car NDNF (test)", test_loader
+        pruned_inter_model_log = _eval_with_log_wrapper(
+            "Disentangled Covertype NDNF model (intermediate, pruned, val)",
         )
         log.info("------------------------------------------")
 
@@ -282,23 +174,22 @@ def single_model_disentangle(
         model.to(device)
         model.eval()
         condensed_model_log = _eval_with_log_wrapper(
-            "Condensed disentangled Car NDNF (test)", test_loader
+            "Disentangled Covertype NDNF model (condensed, test)",
+            test_loader,
         )
 
         return {
-            "intermediate_pre_threshold_log": intermediate_pre_threshold_log,
-            "intermediate_thresholed_log": intermediate_thresholed_log,
-            "intermediate_pruned_log": intermediate_pruned_log,
             "intermediate_ndnf": intermediate_ndnf,
+            "intermediate_log": pruned_inter_model_log,
             "condensed_ndnf": condensed_ndnf,
             "condensed_model": model,
             "condensed_model_log": condensed_model_log,
         }
 
     # Check for checkpoints
-    model_path = model_dir / f"{DISENTANGLED_MODEL_BASE_NAME}_v2.pth"
+    model_path = model_dir / f"{DISENTANGLED_MODEL_BASE_NAME}.pth"
     disentangle_result_json = (
-        model_dir / f"{DISENTANGLED_RESULT_JSON_BASE_NAME}_v2.json"
+        model_dir / f"{DISENTANGLED_RESULT_JSON_BASE_NAME}.json"
     )
     if model_path.exists() and disentangle_result_json.exists():
         # The model has been disentangled, pruned and condensed
@@ -319,20 +210,20 @@ def single_model_disentangle(
         model.load_state_dict(disentangled_state)
         model.eval()
         condensed_model_log = _eval_with_log_wrapper(
-            "Condensed disentangled Car NDNF (test)", test_loader
+            "Disentangled Covertype NDNF model (condensed, test)",
+            test_loader,
         )
     else:
-        ret = disentangle(model)
+        ret = disentangle()
         intermediate_ndnf: NeuralDNF = ret["intermediate_ndnf"]
         disentangled_ndnf: NeuralDNF = ret["condensed_ndnf"]
-        disentangled_model: CarNeuralDNF = ret["condensed_model"]
+        disentangled_model: CoverTypeMLPPINeuralDNF = ret["condensed_model"]
         condensed_model_log = ret["condensed_model_log"]
 
         torch.save(disentangled_model.state_dict(), model_path)
         torch.save(
             intermediate_ndnf.state_dict(),
-            model_dir
-            / f"{INTERMEDIATE_DISENTANGLED_MODEL_BASE_NAME}_ndnf_v2.pth",
+            model_dir / f"{INTERMEDIATE_DISENTANGLED_MODEL_BASE_NAME}_ndnf.pth",
         )
 
         disentanglement_result = {
@@ -340,11 +231,7 @@ def single_model_disentangle(
             "disentangled_ndnf_n_conjunctions": disentangled_ndnf.conjunctions.out_features,
             "disentangled_ndnf_n_out": disentangled_ndnf.disjunctions.out_features,
             "intermediate_ndnf_n_conjunctions": intermediate_ndnf.conjunctions.out_features,
-            "intermediate_pre_threshold_log": ret[
-                "intermediate_pre_threshold_log"
-            ],
-            "intermediate_thresholed_log": ret["intermediate_thresholed_log"],
-            "intermediate_pruned_log": ret["intermediate_pruned_log"],
+            "intermediate_log": ret["intermediate_log"],
             "condensed_model_log": condensed_model_log,
         }
 
@@ -374,10 +261,10 @@ def multirun_disentangle(cfg: DictConfig) -> None:
     log.info(f"Device: {device}")
 
     # Load test data
-    hold_out_test_X, hold_out_test_y = get_car_data_np_from_path(
+    hold_out_test_X, hold_out_test_y = get_covertype_data_np_from_path(
         cfg["dataset"], is_test=True
     )
-    test_dataset = CarDataset(hold_out_test_X, hold_out_test_y)
+    test_dataset = CoverTypeDataset(hold_out_test_X, hold_out_test_y)
     test_loader = DataLoader(
         test_dataset,
         batch_size=DEFAULT_LOADER_BATCH_SIZE,
@@ -402,29 +289,38 @@ def multirun_disentangle(cfg: DictConfig) -> None:
             / caps_experiment_name
             / f"{caps_experiment_name}-{s}"
         )
-        model = construct_model(eval_cfg, num_features=hold_out_test_X.shape[1])
-        assert isinstance(model, (CarNeuralDNFEO, CarNeuralDNFMT))
+        model = construct_model(eval_cfg)
+        assert isinstance(model, CoverTypeMLPPINeuralDNFEO)
 
         model = model.to_ndnf_model()
         model.to(device)
+        model.eval()
         model_state = torch.load(
             model_dir / f"{FIRST_PRUNE_MODEL_BASE_NAME}.pth",
             map_location=device,
             weights_only=True,
         )
         model.load_state_dict(model_state)
-        model.eval()
 
         # Data loaders
-        X, y = get_car_data_np_from_path(cfg["dataset"], is_test=False)
-        X_train, X_val, y_train, y_val = train_test_split(
+        X, y = get_covertype_data_np_from_path(cfg["dataset"], is_test=False)
+        X_train_og, X_val, y_train_og, y_val = train_test_split(
             X,
             y,
             test_size=eval_cfg.get("val_size", 0.2),
             random_state=eval_cfg.get("val_seed", 73),
         )
-        train_dataset = CarDataset(X_train, y_train)
-        val_dataset = CarDataset(X_val, y_val)
+        # Since covertype has a lot of instances of data entries, we further
+        # split the train dataset to use a smaller subset to speed up the
+        # pruning process
+        _, X_train, _, y_train = train_test_split(
+            X_train_og,
+            y_train_og,
+            test_size=0.4,
+            random_state=eval_cfg.get("val_seed", 73),
+        )
+        train_dataset = CoverTypeDataset(X_train, y_train)
+        val_dataset = CoverTypeDataset(X_val, y_val)
         train_loader = DataLoader(
             train_dataset,
             batch_size=DEFAULT_LOADER_BATCH_SIZE,
@@ -463,7 +359,7 @@ def multirun_disentangle(cfg: DictConfig) -> None:
     for k, v in return_dict.items():
         log.info(f"{k}: {v:.3f}")
 
-    with open("disentangle_v2_results.json", "w") as f:
+    with open("disentangle_result.json", "w") as f:
         json.dump(return_dict, f, indent=4)
 
 
@@ -501,7 +397,7 @@ def run_eval(cfg: DictConfig) -> None:
             webhook_url = cfg["webhook"]["discord_webhook_url"]
             post_to_discord_webhook(
                 webhook_url=webhook_url,
-                experiment_name=f"{cfg['eval']['experiment_name']} Multirun Disentangle v2",
+                experiment_name=f"{cfg['eval']['experiment_name']} Multirun Disentangle",
                 message_body=msg_body,
                 errored=errored,
                 keyboard_interrupt=keyboard_interrupt,

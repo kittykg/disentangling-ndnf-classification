@@ -54,6 +54,7 @@ from covertype.models import (
     CoverTypeThresholdPINeuralDNFEO,
     CoverTypeThresholdPINeuralDNFMT,
     CoverTypeThresholdPINeuralDNF,
+    CoverTypeMLPPINeuralDNFEO,
     CoverTypeMLPPINeuralDNFMT,
     CoverTypeMLPPINeuralDNF,
     construct_model,
@@ -327,6 +328,7 @@ def multirun_prune(cfg: DictConfig) -> None:
             (
                 CoverTypeThresholdPINeuralDNFEO,
                 CoverTypeThresholdPINeuralDNFMT,
+                CoverTypeMLPPINeuralDNFEO,
                 CoverTypeMLPPINeuralDNFMT,
             ),
         )
