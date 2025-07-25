@@ -1,3 +1,6 @@
+# This file is available in the neural-dnf module from version 2.0.0 onwards.
+# DO NOT RUN THIS FILE DIRECTLY.
+
 from collections import OrderedDict
 from itertools import chain, combinations
 
@@ -5,6 +8,7 @@ import torch
 from torch import Tensor
 
 from neural_dnf.neural_dnf import NeuralDNF
+
 
 def split_positively_used_conjunction(
     w: Tensor, j_minus_explore_limit: int = -1
